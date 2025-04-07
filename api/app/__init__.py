@@ -1,6 +1,6 @@
 # ------ __init__.py ------
 
-# implementation for all api endpoints
+# Backend Init.
 
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale

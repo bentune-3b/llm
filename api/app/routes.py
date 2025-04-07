@@ -1,6 +1,6 @@
 # ------ routes.py ------
 
-# implementation for all api endpoints
+# Implementation for all api endpoints.
 
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
