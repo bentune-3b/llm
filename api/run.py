@@ -1,6 +1,6 @@
 # ------ run.py ------
 
-# runs the backend architecture of bentune
+# Runs the backend architecture of bentune.
 
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
@@ -11,3 +11,4 @@ from app import create_app
 if __name__ == '__main__':
     application = create_app()
     application.run("0.0.0.0", port=5000)
+    # application.run()
