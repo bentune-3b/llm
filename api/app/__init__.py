@@ -13,6 +13,9 @@ from .routes import bp
 #app registration
 def create_app():
     app = Flask(__name__)
-    CORS(app) 
+    CORS(app, origins=[
+        "http://localhost:3000",
+        "https://bentune-backend.onrender.com/" 
+    ])
     app.register_blueprint(bp)
     return app
