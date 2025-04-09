@@ -16,6 +16,6 @@ def create_app():
     CORS(app, origins=[
         "http://localhost:3000",
         "https://bentune-backend.onrender.com/" 
-    ])
+    ], supports_credentials=True)
     app.register_blueprint(bp)
     return app
