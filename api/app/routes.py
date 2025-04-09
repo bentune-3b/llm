@@ -10,7 +10,7 @@ from .model_service import generate_res
 
 bp = Blueprint('api', __name__)
 
-@bp.route('/query', methods=['POST'])
+@bp.route('/query', methods=['POST', 'OPTIONS'])
 def query_model():
     """
     converts the user question to embedding
@@ -18,6 +18,9 @@ def query_model():
 
     :return: response from model as a json
     """
+    if request.method == 'OPTIONS':
+        return '', 204 
+
     data = request.get_json()
     question = data.get('question', '')
 
