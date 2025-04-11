@@ -50,103 +50,100 @@ print(generated_text.strip())
 ##################################################################################################################################
 
 !pip install datasets
-!pip install evaluate
-!pip install tokenizers
 
-import numpy as np
-from sklearn.model_selection import KFold
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
 from datasets import Dataset
-import torch
-import evaluate
 
-# Sample dataset
 data = {
     "text": [
-        "I loved this product!",
-        "Terrible experience, would not recommend",
-        "It was okay, nothing special",
-        "Absolutely fantastic service",
-        "The worst purchase I've ever made"
+        "I loved this movie!", "It was terrible.", "Not bad", 
+        "Really enjoyed it", "Awful experience", "Just okay"
     ],
-    "label": [1, 0, 2, 1, 0]  # 1=positive, 0=negative, 2=neutral
+    "label": [1, 0, 2, 1, 0, 2]  # 0 = negative, 1 = positive, 2 = neutral
 }
 
 dataset = Dataset.from_dict(data)
 
-metric = evaluate.load("accuracy")
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return metric.compute(predictions=predictions, references=labels)
+model_path = "distilbert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
+model.eval().to("cuda" if torch.cuda.is_available() else "cpu")
 
-# Number of folds
+import torch
+from sklearn.model_selection import KFold
+import json
+import os
+
 k = 5
 kf = KFold(n_splits=k, shuffle=True, random_state=42)
-
-# Initiate list to store results
-fold_results = []
-
-texts = np.array(dataset["text"])
-labels = np.array(dataset["label"])
-
-tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-
-for fold, (train_idx, val_idx) in enumerate(kf.split(texts)):
-    print(f"\n=== Fold {fold + 1}/{k} ===")
-
-    # Split data
-    train_texts = texts[train_idx]
-    train_labels = labels[train_idx]
-    val_texts = texts[val_idx]
-    val_labels = labels[val_idx]
-
-    train_dataset = Dataset.from_dict({"text": train_texts, "label": train_labels})
-    val_dataset = Dataset.from_dict({"text": val_texts, "label": val_labels})
-
-    def tokenize_function(examples):
-        return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=128)
-
-    tokenized_train = train_dataset.map(tokenize_function, batched=True)
-    tokenized_val = val_dataset.map(tokenize_function, batched=True)
-
-    # Training arguments
-    training_args = TrainingArguments(
-        output_dir=f"./results_fold_{fold}",
-        evaluation_strategy="epoch",
-        learning_rate=2e-5,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        num_train_epochs=3,
-        weight_decay=0.01,
-        save_strategy="no",
-        load_best_model_at_end=False,
-        logging_dir=f"./logs_fold_{fold}",
-    )
-
-    # Initialize model for this fold
-    model = AutoModelForSequenceClassification.from_pretrained(
-        "bert-base-uncased",
-        num_labels=3
-    )
-
-  
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_train,
-        eval_dataset=tokenized_val,
-        compute_metrics=compute_metrics,
-    )
-
-    # Train and evaluate
-    trainer.train()
-    eval_results = trainer.evaluate()
-    fold_results.append(eval_results)
-
-    print(f"Fold {fold + 1} results:", eval_results)
+texts = dataset["text"]
+labels = dataset["label"]
 
 
-avg_accuracy = np.mean([result["eval_accuracy"] for result in fold_results])
-print(f"\nAverage accuracy across {k} folds: {avg_accuracy:.4f}")
+id2label = {0: "negative", 1: "positive", 2: "neutral"}
+label2id = {v: k for k, v in id2label.items()}
+
+os.makedirs("kfold_results", exist_ok=True)
+
+fold = 1
+for train_idx, val_idx in kf.split(texts):
+    print(f"\n Fold {fold}")
+
+    fold_results = []
+    for i in val_idx:
+        input_text = texts[i]
+        true_label_id = labels[i]
+        true_label = id2label[true_label_id]
+
+        # Run inference
+        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, padding=True).to(model.device)
+        with torch.no_grad():
+            outputs = model(**inputs)
+        pred_id = torch.argmax(outputs.logits, dim=-1).item()
+        pred_label = id2label[pred_id]
+
+        fold_results.append({
+            "input": input_text,
+            "label": true_label,
+            "prediction": pred_label
+        })
+
+    # Save fold results
+    with open(f"kfold_results/fold_{fold}_results.json", "w") as f:
+        json.dump(fold_results, f, indent=2)
+    
+    print(f" Saved fold_{fold}_results.json")
+    fold += 1
+
+from sklearn.metrics import accuracy_score
+
+accuracies = []
+
+for filename in sorted(os.listdir("kfold_results")):
+    if filename.endswith(".json"):
+        with open(os.path.join("kfold_results", filename), "r") as f:
+            data = json.load(f)
+            y_true = [d["label"] for d in data]
+            y_pred = [d["prediction"] for d in data]
+            acc = accuracy_score(y_true, y_pred)
+            print(f" {filename} → Accuracy: {acc:.4f}")
+            accuracies.append(acc)
+
+print(f"\n Average Accuracy over {k} folds: {sum(accuracies)/len(accuracies):.4f}")
+
+from sklearn.metrics import accuracy_score
+
+accuracies = []
+
+for filename in sorted(os.listdir("kfold_results")):
+    if filename.endswith(".json"):
+        with open(os.path.join("kfold_results", filename), "r") as f:
+            data = json.load(f)
+            y_true = [d["label"] for d in data]
+            y_pred = [d["prediction"] for d in data]
+            acc = accuracy_score(y_true, y_pred)
+            print(f" {filename} → Accuracy: {acc:.4f}")
+            accuracies.append(acc)
+
+print(f"\n Average Accuracy over {k} folds: {sum(accuracies)/len(accuracies):.4f}")
