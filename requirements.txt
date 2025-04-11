@@ -34,7 +34,6 @@ fabric==3.2.2
 fastapi==0.115.12
 filelock==3.18.0
 Flask==3.1.0
-flask-cors==5.0.1
 frozenlist==1.5.0
 fsspec==2024.12.0
 google-pasta==0.2.0
@@ -54,8 +53,10 @@ markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 mdurl==0.1.2
 mock==4.0.3
+mpmath==1.3.0
 multidict==6.3.2
 multiprocess==0.70.16
+networkx==3.2.1
 numpy==2.0.2
 omegaconf==2.3.0
 packaging==24.2
@@ -97,10 +98,12 @@ six==1.17.0
 smdebug-rulesconfig==1.0.1
 sniffio==1.3.1
 starlette==0.46.1
+sympy==1.13.1
 tblib==3.1.0
 termcolor==2.5.0
 tokenizers==0.21.1
 tomli==2.2.1
+torch==2.6.0
 tqdm==4.67.1
 transformers==4.51.0
 typing-inspection==0.4.0
