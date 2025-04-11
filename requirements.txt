@@ -61,7 +61,6 @@ omegaconf==2.3.0
 packaging==24.2
 pandas==2.2.3
 paramiko==3.5.1
-pathos==0.3.3
 pathspec==0.10.1
 platformdirs==4.3.7
 pluggy==1.5.0
