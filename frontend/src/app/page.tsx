@@ -10,33 +10,32 @@ export default function ChatPage() {
 
   const sendMessage = async () => {
     if (!input.trim()) return;
-  
-    const userMessage = { role: 'user', text: input };
+
+    const userMessage: { role: 'user'; text: string } = { role: 'user', text: input };
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     setInput('');
     setLoading(true);
-  
+
     try {
       const response = await fetch('https://bentune-backend.onrender.com/query', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: input }),
       });
-  
+
       const data = await response.json();
-  
+
       if (!response.ok) {
         throw new Error(data.error || 'API Error');
       }
-  
-      const botMessage = {
+
+      // Explicitly type the bot message
+      const botMessage: { role: 'bot'; text: string } = {
         role: 'bot',
         text: data.answer ?? 'No response from model.',
       };
-  
+
       setMessages([...updatedMessages, botMessage]);
     } catch (error: any) {
       setMessages([
@@ -44,11 +43,9 @@ export default function ChatPage() {
         { role: 'bot', text: 'Error: ' + error.message },
       ]);
     }
-  
+
     setLoading(false);
   };
-  
-  
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -58,9 +55,9 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
+    <div className="flex flex-col h-screen bg-black">
       {/* Header with logo */}
-      <header className="flex items-center p-4 border-b bg-white shadow-md">
+      <header className="flex items-center p-4 border-b bg-black shadow-md">
         <Image src="/logo.png" alt="Logo" width={275} height={275} className="mr-3" />
       </header>
 
@@ -81,7 +78,7 @@ export default function ChatPage() {
       </div>
 
       {/* Input Box */}
-      <div className="p-4 border-t bg-white">
+      <div className="p-4 border-t bg-black">
         <textarea
           rows={1}
           value={input}
