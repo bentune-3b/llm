@@ -1,3 +1,54 @@
+!pip install -q transformers accelerate bitsandbytes
+
+# login
+from huggingface_hub import notebook_login
+notebook_login()
+
+# Load model
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+model_id = "meta-llama/Llama-3.2-3B"
+
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    load_in_4bit=True,
+    device_map="auto",
+    torch_dtype=torch.float16
+)
+
+def generate_response(prompt: str) -> str:
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    outputs = model.generate(**inputs, max_new_tokens=100)
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+# Test
+print(generate_response("What is the capital of Mexico?"))
+
+few_shot_prompt = """Classify the sentiment of the following reviews.
+
+Review: I absolutely loved the product. Will buy again!
+Sentiment: Positive
+
+Review: The item arrived broken. Not satisfied.
+Sentiment: Negative
+
+Review: It was okay, not great but not bad either.
+Sentiment: Neutral
+
+Review: The customer service was chill.
+Sentiment:"""
+
+inputs = tokenizer(few_shot_prompt, return_tensors="pt").to(model.device)
+input_length = inputs["input_ids"].shape[1]
+outputs = model.generate(**inputs, max_new_tokens=1, do_sample=False, temperature=0.6)
+generated_text = tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)
+print(generated_text.strip())
+
+##################################################################################################################################
+
 !pip install datasets
 !pip install evaluate
 !pip install tokenizers
