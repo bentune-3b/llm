@@ -59,7 +59,7 @@ multiprocess==0.70.16
 nest-asyncio==1.6.0
 networkx==3.4.2
 ninja==1.11.1.4
-numpy>=2.2.4
+numpy>=1.25,<2.2
 openai==1.75.0
 opencv-python-headless==4.11.0.86
 outlines==0.1.11
