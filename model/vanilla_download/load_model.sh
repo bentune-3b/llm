@@ -3,8 +3,8 @@
 #SBATCH --output=llama_download.out
 #SBATCH --error=llama_download.err
 #SBATCH --time=01:00:00
-#SBATCH --partition=class
-#SBATCH --account=class_cse476spring2025
+#SBATCH -p general
+#SBATCH -A class_cse476spring2025
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
