@@ -1,7 +1,10 @@
-# ------ routes.py ------
+# routes.py
+# ------------------------
+# api endpoint impl
 
-# Implementation for all api endpoints.
+# - query_model() -> public interface
 
+# ------------------------
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 

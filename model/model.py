@@ -1,8 +1,8 @@
-# ------ model.py ------
-
+# model.py
+# ------------------------
 # run once to build an instance of the model and
 # save the weights in local directory
-
+# ------------------------
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
@@ -19,6 +19,6 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16
 )
 
-save_directory = "./model/llama-3.2-3b-4bit"
+save_directory = "./llama-3.2-3b-4bit"
 model.save_pretrained(save_directory)
 tokenizer.save_pretrained(save_directory)
