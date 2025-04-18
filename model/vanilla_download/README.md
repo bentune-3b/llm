@@ -14,12 +14,18 @@ we can check the status using:
 
 `squeue -u <ur asurite>`
 
+ST:
+- PD = pending
+- R = running
+- CG = completing
+- (empty) = done
+
 this will save the model to:
 
-``bentune/downloaded_models/``
+``~/bentune/downloaded_models/``
 
-and log in:
-- ``bentune/output_logs/vanilla_download.out``
-- ``bentune/output_logs/vanilla_download.err``
+and logs in:
+- ``~/bentune/output_logs/vanilla_download.out``
+- ``~/bentune/output_logs/vanilla_download.err``
 
 
