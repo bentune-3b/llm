@@ -1,5 +1,14 @@
+import argparse
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import os
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--save_dir", type=str, default="./vanilla-llama-3.2-3b")
+args = parser.parse_args()
+
+SAVE_DIR = args.save_dir
+MODEL_NAME = "meta-llama/Llama-3.2-3B"
 
 if torch.cuda.is_available():
     print("found CUDA")
@@ -8,8 +17,8 @@ else:
     print("no CUDA :(")
     device = "cpu"
 
-MODEL_NAME = "meta-llama/Llama-3.2-3B"
-SAVE_DIR = "./vanilla-llama-3.2-3b"
+print("Creating save directory:", SAVE_DIR)
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 print("Loading tokenizer")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
