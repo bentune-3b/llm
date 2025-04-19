@@ -21,6 +21,7 @@ Apparently 3.10 is the recommended version for our use case, as it offers broad 
 `source activate bentune`
 
 `pip install --upgrade pip`
+
 `pip install transformers accelerate torch sentencepiece safetensors huggingface_hub`
 
 `huggingface-cli login`
