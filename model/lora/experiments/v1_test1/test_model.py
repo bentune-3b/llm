@@ -4,7 +4,7 @@ import torch
 import os
 
 base_model_dir = os.path.expanduser("~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-bf16")
-adapter_dir = os.path.expanduser("~/bentune/model/lora/experiments/v1_test1/output_model")
+adapter_dir = os.path.expanduser("~/bentune/model/lora/experiments/v1_test1/output_model/checkpoint-135")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
