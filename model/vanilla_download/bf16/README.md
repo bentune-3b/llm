@@ -55,6 +55,16 @@ then activate conda:
 
 `source activate bentune`
 
+`pip install protobuf` 
+
+reacticate
+
+`source activate bentune`
+
+we only do this the first time
+
+tokenizer backend needs Google’s protobuf library for bf16
+
 then run:
 
 `python ~/bentune/model/vanilla_download/bf16/test_model.py`
