@@ -28,7 +28,12 @@ def main():
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     def tokenize_fn(batch):
-        toks = tokenizer(batch["text"], truncation=True, max_length=1024)
+        toks = tokenizer(
+            batch["text"],
+            truncation=True,
+            padding="max_length",
+            max_length=1024
+        )
         toks["labels"] = toks["input_ids"].copy()
         return toks
 
