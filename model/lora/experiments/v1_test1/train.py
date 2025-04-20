@@ -6,7 +6,7 @@ import torch
 def main():
     set_seed(42)
 
-    model_dir = "downloaded_models/vanilla-llama-3.2-3b-bf16"
+    model_dir = "~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-bf16"
     data_file = "data/instruction_tuning_data.jsonl"
     output_dir = "model/lora/experiments/v1_test1/output_model"
 

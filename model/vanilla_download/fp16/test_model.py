@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
-model_path = "downloaded_models/vanilla-llama-3.2-3b-fp16"
+model_path = "~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-fp16"
 
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16).cuda()

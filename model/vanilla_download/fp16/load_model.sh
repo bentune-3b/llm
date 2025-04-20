@@ -15,7 +15,7 @@ source activate bentune
 echo "Using environment: $CONDA_DEFAULT_ENV"
 python3 -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 
-SAVE_DIR=downloaded_models/vanilla-llama-3.2-3b-fp16
+SAVE_DIR=~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-fp16
 mkdir -p $SAVE_DIR
 
 echo "Starting vanilla_loader.py..."
