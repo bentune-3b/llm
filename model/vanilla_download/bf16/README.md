@@ -24,7 +24,7 @@ ST:
 
 once its done, it will save the model at:
 
-``~/bentune/downloaded_models/``
+``~/bentune/model/downloaded_models/``
 
 and the logs in:
 - ``~/bentune/output_logs/vanilla_download.out``
