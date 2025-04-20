@@ -8,6 +8,7 @@ bentune/
 # Don't track model files
 downloaded_models/
 output_logs/
+output_model/
 
 # C extensions
 *.so
