@@ -8,7 +8,7 @@ def main():
     set_seed(42)
 
     model_dir = os.path.expanduser("~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-bf16")
-    data_file = os.path.expanduser("~/bentune/model/data/instruction_tuning_data.jsonl")
+    data_file = os.path.expanduser("~/bentune/model/data/processed/instruction_tuning_data.jsonl")
     output_dir = os.path.expanduser("~/bentune/model/lora/experiments/v1_test1/output_model")
 
     # load and split dataset
