@@ -19,5 +19,5 @@ SAVE_DIR=downloaded_models/vanilla-llama-3.2-3b-bf16
 mkdir -p $SAVE_DIR
 
 echo "Starting vanilla_loader.py..."
-python3 model/vanilla_download/vanilla_loader.py --save_dir $SAVE_DIR
+python3 model/vanilla_download/bf16/vanilla_loader.py --save_dir $SAVE_DIR
 echo "Model download complete."

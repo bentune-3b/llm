@@ -8,7 +8,7 @@ pull the repo
 
 then submit the job:
 
-`sbatch ~/bentune/model/vanilla_download/load_model.sh`
+`sbatch ~/bentune/model/vanilla_download/bf16/load_model.sh`
 
 this should give you the job id
 
@@ -57,4 +57,4 @@ then activate conda:
 
 then run:
 
-`python ~/bentune/model/vanilla_download/test_model.py`
+`python ~/bentune/model/vanilla_download/bf16/test_model.py`
