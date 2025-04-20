@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForCausalLM, set_seed
+from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, set_seed, DataCollatorForLanguageModeling
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 import torch
@@ -77,7 +77,11 @@ def main():
         report_to=["tensorboard"]
     )
 
-    data_collator = DataCollatorForCausalLM(tokenizer, pad_to_multiple_of=8)
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+        pad_to_multiple_of=8
+    )
 
     trainer = Trainer(
         model=model,
