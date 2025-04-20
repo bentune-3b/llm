@@ -2,13 +2,14 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments,
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 import torch
+import os
 
 def main():
     set_seed(42)
 
-    model_dir = "~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-bf16"
-    data_file = "data/instruction_tuning_data.jsonl"
-    output_dir = "model/lora/experiments/v1_test1/output_model"
+    model_dir = os.path.expanduser("~/bentune/model/downloaded_models/vanilla-llama-3.2-3b-bf16")
+    data_file = os.path.expanduser("~/bentune/model/data/instruction_tuning_data.jsonl")
+    output_dir = os.path.expanduser("~/bentune/model/lora/experiments/v1_test1/output_model")
 
     # load and split dataset
     raw = load_dataset("json", data_files=data_file, split="train")
