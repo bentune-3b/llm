@@ -65,6 +65,7 @@ def inject_cot(
     load a JSONL of {"instruction","input","output"} samples,
     generate CoT for a random subset using the provided model & tokenizer,
     replace `output` with the full rationale, and write to a new JSONL.
+
     :param input_path: jsonl input path
     :param output_path: output path for injected CoT
     :param model: model instance

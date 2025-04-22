@@ -167,7 +167,7 @@ CONFIGS = {
     "trivia_qa": "unfiltered",
 }
 
-# datasets requiring streaming to avoid Arrow conversion issues
+# datasets requiring streaming to avoid arrow conversion issues
 STREAMING_DATASETS = ["voidful/StrategyQA"]
 
 # override split names for datasets without a 'train' split
