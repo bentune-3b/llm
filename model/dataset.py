@@ -1,6 +1,12 @@
 # dataset.py
 # ------------------------
 # prepares instruction tuned dataset for training
+#
+# notes: strategy qa dataset loading is loaded manually.
+#        the json file is deleted after training datapool
+#        is loaded, but if you need to load it again,
+#        download the train split raw json file and place
+#        it in the llm dir
 # ------------------------
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
@@ -42,11 +48,11 @@ def normalize_math(item):
     }
 
 def normalize_hotpot_qa(item):
-    # Extract and clean question
+    # extract and clean question
     raw_q = item.get("question", "")
     q_text = safe_strip(raw_q)
 
-    # Extract and clean context list
+    # context list
     raw_ctx = item.get("context", "")
     if isinstance(raw_ctx, list):
         parts = []
@@ -56,7 +62,7 @@ def normalize_hotpot_qa(item):
     else:
         ctx_text = safe_strip(raw_ctx)
 
-    # Extract and clean answer
+    # answer
     raw_a = item.get("answer", "")
     a_text = safe_strip(raw_a)
 
@@ -67,11 +73,9 @@ def normalize_hotpot_qa(item):
     }
 
 def normalize_hhh_alignment(item):
-    # Extract the question from 'input' or fallback to 'question'
     question = item.get("input") 
     answer = ""
 
-    # Try to get multiple-choice answers from 'targets'
     targets = item.get("targets", {})
     choices = targets.get("choices", [])
     labels = targets.get("labels", [])
@@ -85,23 +89,23 @@ def normalize_hhh_alignment(item):
         "output": safe_strip(answer),
     }
 
-
-# Letter keys for multiple choice options
+# mcq keys
 CHOICE_LETTERS = ["A", "B", "C", "D"]
+
 def normalize_mmlu(item):
-    # Extract all four answer choices in order
+    # get ans choices
     choices = [item.get(letter, "") for letter in CHOICE_LETTERS]
 
-    # Get the correct answer key
+    # correct ans
     answer_key = item.get("Answer", "").strip().upper()
 
-    # Convert letter key to index 
+    # letter to index
     answer_index = CHOICE_LETTERS.index(answer_key) 
 
-    # Select the correct answer text if index is valid
+    # check validity
     answer_text = choices[answer_index] 
 
-    # Format question with choices
+    # format q with ans
     input_text = f"{safe_strip(item.get('Question', ''))}\nChoices:\n" + \
                  "\n".join([f"{letter}) {safe_strip(choice)}" for letter, choice in zip(CHOICE_LETTERS, choices)])
 
@@ -110,7 +114,6 @@ def normalize_mmlu(item):
         "input": input_text,
         "output": safe_strip(answer_text),
     }
-
 
 def normalize_strategy_qa(item):
     # Extract and clean question
@@ -126,7 +129,6 @@ def normalize_strategy_qa(item):
         "output": answer,
     }
 
-
 def normalize_trivia_qa(item):
     return {
         "instruction": "Answer the following trivia question:",
@@ -140,9 +142,6 @@ def normalize_truthful_qa(item):
         "input": safe_strip(item.get("Question", "")),
         "output": safe_strip(item.get("Best Answer", "")),
     }
-
-
-
 # -----------------
 
 # --- constants ---
@@ -177,13 +176,20 @@ SPLIT_OVERRIDES = {
     "HuggingFaceH4/hhh_alignment": "test",
 }
 
+# -----------------
+
+# --- helpers ---
+
 # helper to safely strip non-string values
 def safe_strip(value):
     if hasattr(value, "strip"):
         return value.strip()
     return str(value)
 
+# -----------------
+
 # --- processing ---
+
 def process(name, split="train"):
     """
     processes given hugging face dataset
@@ -210,7 +216,7 @@ def process(name, split="train"):
         print(f"--> Skipping {name} due to load error: {e}")
         return []
 
-    norm = DATASETS[name]                       #fetch the normalizing function from dict
+    norm = DATASETS[name]                       # fetch the normalizing function from dict
     out = []                                    # array to maintain all dataset
     for ex in ds:
         s = norm(ex)
@@ -219,33 +225,42 @@ def process(name, split="train"):
     print(f"--> {len(out)} valid samples from {name}")
     return out
 
+# -----------------
+
 def main():
     # Collect all normalized examples from defined datasets
     all_samples = []
     for ds_name in DATASETS:
         all_samples.extend(process(ds_name, split="train"))
 
-    # ---- Load StrategyQA manually from local JSON file ----
+    # ---- loads strategy qa dataset from json file ----
     try:
-        # Load raw JSON and normalize
+        # load raw json and normalize
         raw_data = [normalize_strategy_qa(item) for item in json.load(open("strategyqa_train.json"))]
-        # Keep only well-formed examples
+
+        # check formatting and only use the clean data entries
         clean_data = [item for item in raw_data if item["instruction"] and item["output"]]
-        # Convert to Hugging Face Dataset via Pandas -> PyArrow
+
+        # convert dataframe to pyarrow
         df = pd.DataFrame(clean_data)
         table = pa.Table.from_pandas(df)
         hf_dataset = Dataset(table)
-        # Append StrategyQA data to all_samples
+
+        # append to add samples
         all_samples.extend(hf_dataset.to_list())
+
         print(f"--> {len(clean_data)} StrategyQA samples added.")
+
     except Exception as e:
         print(f"--> Skipping StrategyQA due to load error: {e}")
 
-    # Shuffle all combined samples
+    # -----------------
+
+    # shuffle dataset
     random.seed(42)
     random.shuffle(all_samples)
 
-    # Write to JSONL file
+    # write to jsonl alpaca style
     output_file = "train_set.jsonl"
     print(f">>> Writing {len(all_samples)} total samples to {output_file}")
     with open(output_file, "w", encoding="utf-8") as fw:
