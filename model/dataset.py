@@ -17,6 +17,7 @@ import random
 import pandas as pd
 import pyarrow as pa
 from datasets import load_dataset, Dataset
+import math
 
 # --- normalizing functions ---
 def normalize_gsm8k(item):
@@ -146,15 +147,15 @@ def normalize_truthful_qa(item):
 
 # --- constants ---
 DATASETS = {
-    "qwedsacf/grade-school-math-instructions":         normalize_grade_school_instructions,
-    "juletxara/mgsm_mt":                               normalize_mgsm_mt,
-    "deepmind/math_dataset":                           normalize_math,
-    "openai/gsm8k":                                    normalize_gsm8k,
-    "hotpot_qa":                                       normalize_hotpot_qa,
-    "HuggingFaceH4/hhh_alignment":                     normalize_hhh_alignment,
-    "openai/MMMLU":                                    normalize_mmlu,
-    "trivia_qa":                                       normalize_trivia_qa,
-    "domenicrosati/TruthfulQA":                        normalize_truthful_qa
+    # "qwedsacf/grade-school-math-instructions":         normalize_grade_school_instructions,
+    "juletxara/mgsm_mt":                               normalize_mgsm_mt,   
+    "deepmind/math_dataset":                           normalize_math,      
+    "openai/gsm8k":                                    normalize_gsm8k,     
+    "hotpot_qa":                                       normalize_hotpot_qa, 
+    "HuggingFaceH4/hhh_alignment":                     normalize_hhh_alignment, 
+    "openai/MMMLU":                                    normalize_mmlu,          
+    "trivia_qa":                                       normalize_trivia_qa,     
+    "domenicrosati/TruthfulQA":                        normalize_truthful_qa    
 }
 
 CONFIGS = {
@@ -228,31 +229,31 @@ def process(name, split="train"):
 # -----------------
 
 def main():
-    # Collect all normalized examples from defined datasets
+    # collect examples
     all_samples = []
     for ds_name in DATASETS:
-        all_samples.extend(process(ds_name, split="train"))
+        samples = process(ds_name, split="train")
+        # decide fraction
+        frac = 0.2 if ds_name == "openai/gsm8k" else 0.1
+        k = max(1, int(len(samples) * frac))
+        sampled = random.sample(samples, k)
+        print(f"---> Sampled {len(sampled)} from {ds_name} ({frac*100:.0f}%)")
+        all_samples.extend(sampled)
 
-    # ---- loads strategy qa dataset from json file ----
+    # strategy qa dataset
     try:
-        # load raw json and normalize
         raw_data = [normalize_strategy_qa(item) for item in json.load(open("strategyqa_train.json"))]
-
-        # check formatting and only use the clean data entries
         clean_data = [item for item in raw_data if item["instruction"] and item["output"]]
-
-        # convert dataframe to pyarrow
-        df = pd.DataFrame(clean_data)
-        table = pa.Table.from_pandas(df)
-        hf_dataset = Dataset(table)
-
-        # append to add samples
-        all_samples.extend(hf_dataset.to_list())
-
-        print(f"--> {len(clean_data)} StrategyQA samples added.")
-
+        print(f"---> Loaded {len(clean_data)} StrategyQA samples")
+        all_samples.extend(clean_data)
     except Exception as e:
         print(f"--> Skipping StrategyQA due to load error: {e}")
+
+    # check if 120k samples have been collected yet
+    total = len(all_samples)
+    if total > 120_000:
+        all_samples = random.sample(all_samples, 120_000)
+        print(f"---> Down-sampled combined pool from {total} to 120000")
 
     # -----------------
 
