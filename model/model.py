@@ -1,110 +1,165 @@
 # model.py
 # ------------------------
-# run once to build an instance of the model and
-# save the weights in local directory
+# fine-tune llama 3.2 3b on instruction tuned dataset with QLoRA
 # ------------------------
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForLanguageModeling
-from datasets import load_dataset
+from transformers import (AutoTokenizer, AutoModelForCausalLM, TrainingArguments,
+                          Trainer, DataCollatorForLanguageModeling, BitsAndBytesConfig)
+from datasets import load_dataset, Dataset
 import torch
-from prompt import inject_cot
 import os
+from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
+import random
 
+# --- configuration ---
 model_id = "meta-llama/Llama-3.2-3B"
-save_directory = "./llama-3.2-3b-4bit-finetuned"
+save_directory = "./model/llama-3.2-3b-4bit-finetuned"
+dataset_jsonl_path = "model/train_set.jsonl"
+
+#hyperparams
+TRAINING_DATA_SAMPLE_SIZE = 100000  #increase later
+NUM_TRAIN_EPOCHS = 3
+BATCH_SIZE_PER_DEVICE = 4
+GRADIENT_ACCUMULATION_STEPS = 2
+MAX_SEQUENCE_LENGTH = 512
+DTYPE = torch.bfloat16
+
+# --- device setup ---
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f">>> Status: Using device: {device}")
+
+# --- validate dataset ---
+if not os.path.exists(dataset_jsonl_path):
+    print(f"Error: Dataset file '{dataset_jsonl_path}' not found. Please run dataset.py first to generate it.")
+    exit()
+
+# --- load dataset ---
+print(f">>> Status: Loading dataset from {dataset_jsonl_path}...")
+full_dataset = load_dataset('json', data_files=dataset_jsonl_path, split='train')
+print(f"Full dataset loaded with {len(full_dataset)} entries.")
+
+# --- sampling ---
+if TRAINING_DATA_SAMPLE_SIZE < len(full_dataset):
+    random.seed(42)
+    indices = random.sample(range(len(full_dataset)), TRAINING_DATA_SAMPLE_SIZE)
+    train_dataset = full_dataset.select(indices)
+    print(f">>> Status: Sampled dataset size: {len(train_dataset)}")
+else:
+    train_dataset = full_dataset
 
 # --- load model and tokenizer ---
+print(f">>> Status: Loading model and tokenizer: {model_id}...")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-# padding token
+# --- padding token setup ---
 if tokenizer.pad_token is None:
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
+
+# --- configure bitsandbytes ---
+quant_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=DTYPE,
+    bnb_4bit_use_double_quant=True,
+)
 
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    load_in_4bit=True,
-    device_map="auto",
-    torch_dtype=torch.float16
+    quantization_config=quant_config,
+    torch_dtype=DTYPE
 )
+
+model.to(device)        #move to gpu
 
 # resize token embeddings
 model.resize_token_embeddings(len(tokenizer))
 
-# --- prepare dataset ---
-dataset_path = "model/train_set.jsonl"
-if not os.path.exists(dataset_path):
-    print(f"Error: Dataset file '{dataset_path}' not found. Please run dataset.py first.")
-    exit()
+# --- QLoRA stuff ---
+model = prepare_model_for_kbit_training(model)
 
-# load the dataset
-dataset = load_dataset('json', data_files=dataset_path, split='train')
-
-# --- inject chain of thought ---
-cot_injected_dataset_path = "model/train_set_cot.jsonl"
-print(f"Injecting Chain of Thought into {dataset_path}...")
-inject_cot(
-    input_path=dataset_path,
-    output_path=cot_injected_dataset_path,
-    model=model,
-    tokenizer=tokenizer,
-    sample_frac=1.0         # inject cot into all samples
+# lora config
+peft_config = LoraConfig(
+    r=8,
+    lora_alpha=32,
+    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    use_reentrant=False
 )
-print(f"CoT injected dataset saved to {cot_injected_dataset_path}")
 
-# Load the CoT injected dataset for training
-train_dataset = load_dataset('json', data_files=cot_injected_dataset_path, split='train')
+# add lora configs to peft
+model = get_peft_model(model, peft_config)
+
+print(">>> Status: Model loaded, PEFT configured, and moved to device:")
+model.print_trainable_parameters()
 
 # --- tokenize dataset ---
+print(">>> Status: Tokenizing the dataset...")
 def tokenize_function(examples):
-    # Format the instruction, input, and output into a single text for fine-tuning
-    # This format is based on the Alpaca instruction tuning format
-    # You might need to adjust this based on the exact format expected by Llama-3.2
-    text = [f"Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n{output}{tokenizer.eos_token}"
-            for instruction, input, output in zip(examples["instruction"], examples["input"], examples["output"])]
-    return tokenizer(text, padding="max_length", truncation=True, max_length=512) # Adjust max_length as needed
+    text = []
+    for instruction, input, output in zip(examples["instruction"], examples["input"], examples["output"]):
+         # Formatting the example following the Alpaca-like instruction tuning format
+         formatted_example = (
+             f"Below is an instruction that describes a task, paired with an input that provides further context. "
+             f"Write a response that appropriately completes the request.\n\n"
+             f"### Instruction:\n{instruction}\n\n"
+             f"### Input:\n{input}\n\n"
+             f"### Response:\n{output}{tokenizer.eos_token}" # Ensure output ends with EOS token
+         )
+         text.append(formatted_example)
 
-tokenized_datasets = train_dataset.map(tokenize_function, batched=True, remove_columns=["instruction", "input", "output"])
+    return tokenizer(text, truncation=True, max_length=MAX_SEQUENCE_LENGTH)
 
-# --- fine-tune setup ---
+tokenized_dataset = train_dataset.map(
+    tokenize_function,
+    batched=True,
+    remove_columns=["instruction", "input", "output"],
+    num_proc=os.cpu_count()
+)
+print(">>> Status: Dataset tokenization complete.")
+
+# --- fine tune setup ---
 training_args = TrainingArguments(
-    output_dir=save_directory,  # Directory to save the fine-tuned model
-    num_train_epochs=3,          # Number of training epochs
-    per_device_train_batch_size=4, # Batch size per GPU/device
-    gradient_accumulation_steps=2, # Accumulate gradients over steps
-    optim="paged_adamw_8bit",    # Optimizer
-    learning_rate=2e-4,          # Learning rate
-    lr_scheduler_type="cosine",  # Learning rate scheduler
-    save_steps=500,              # Save checkpoint every 500 steps
-    logging_steps=50,            # Log training progress every 50 steps
-    report_to="none",            # Disable reporting to platforms like W&B
-    push_to_hub=False,           # Do not push to Hugging Face Hub
-    # Add these parameters for QLoRA
-    bf16=True,                   # Enable bfloat16 if supported by your GPU
-    # fp16=False,                # Disable fp16 if bf16 is enabled
-    warmup_ratio=0.05,           # Warmup ratio for learning rate
-    weight_decay=0.001,          # Weight decay
-    ddp_find_unused_parameters=False # Needed for DDP with gradient accumulation
+    output_dir=save_directory,
+    num_train_epochs=NUM_TRAIN_EPOCHS,
+    per_device_train_batch_size=BATCH_SIZE_PER_DEVICE,
+    gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+    optim="paged_adamw_8bit",
+    learning_rate=2e-4,
+    lr_scheduler_type="cosine",
+    save_steps=500,
+    logging_steps=50,
+    report_to="none",
+    save_total_limit=2,
+    bf16=True,
+    fp16=False,
+    warmup_ratio=0.05,
+    weight_decay=0.001,
+    ddp_find_unused_parameters=False
 )
 
-# data collator for language modeling
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False,
+)
 
 # --- trainer ---
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_datasets,
+    train_dataset=tokenized_dataset,
     data_collator=data_collator,
 )
 
-# --- start fine-tuning ---
-print("Starting fine-tuning...")
+# --- actual fine-tune fr fr ---
+print(">>> Status: Starting fine-tuning...")
 trainer.train()
-print("Fine-tuning finished.")
+print(">>> Status: Fine-tuning finished.")
 
 # --- save model ---
 trainer.save_model(save_directory)
 tokenizer.save_pretrained(save_directory)
-print(f"Fine-tuned model and tokenizer saved to {save_directory}")
+print(f"Fine-tuned model (LoRA adapters) and tokenizer saved to {save_directory}")
