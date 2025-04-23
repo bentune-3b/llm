@@ -18,9 +18,6 @@ model_id = "meta-llama/Llama-3.2-3B"
 save_directory = "./model/llama-3.2-3b-4bit-finetuned"
 dataset_jsonl_path = "model/train_set.jsonl"
 
-#temp --remove later
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 #hyperparams
 TRAINING_DATA_SAMPLE_SIZE = 100000  #increase later
 NUM_TRAIN_EPOCHS = 3
@@ -86,9 +83,6 @@ peft_config = LoraConfig(
 
 # add lora configs to peft
 model = get_peft_model(model, peft_config)
-
-# temp --------
-model.gradient_checkpointing_enable()
 
 print(">>> Status: Model loaded, PEFT configured, and moved to device:")
 model.print_trainable_parameters()
