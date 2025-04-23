@@ -6,7 +6,7 @@
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
 from transformers import (AutoTokenizer, AutoModelForCausalLM, TrainingArguments,
-                          Trainer, DataCollatorForLanguageModeling, BitsAndBytesConfig)
+                          Trainer, DataCollatorForLanguageModeling)
 from datasets import load_dataset, Dataset
 import torch
 import os
@@ -18,10 +18,13 @@ model_id = "meta-llama/Llama-3.2-3B"
 save_directory = "./model/llama-3.2-3b-4bit-finetuned"
 dataset_jsonl_path = "model/train_set.jsonl"
 
+#temp --remove later
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 #hyperparams
 TRAINING_DATA_SAMPLE_SIZE = 100000  #increase later
 NUM_TRAIN_EPOCHS = 3
-BATCH_SIZE_PER_DEVICE = 4
+BATCH_SIZE_PER_DEVICE = 2
 GRADIENT_ACCUMULATION_STEPS = 2
 MAX_SEQUENCE_LENGTH = 512
 DTYPE = torch.bfloat16
@@ -57,17 +60,9 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 if tokenizer.pad_token is None:
     tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
 
-# --- configure bitsandbytes ---
-quant_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=DTYPE,
-    bnb_4bit_use_double_quant=True,
-)
-
+# --- load model in 16-bit precision ---
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    quantization_config=quant_config,
     torch_dtype=DTYPE
 )
 
@@ -87,11 +82,13 @@ peft_config = LoraConfig(
     lora_dropout=0.05,
     bias="none",
     task_type="CAUSAL_LM",
-    use_reentrant=False
 )
 
 # add lora configs to peft
 model = get_peft_model(model, peft_config)
+
+# temp --------
+model.gradient_checkpointing_enable()
 
 print(">>> Status: Model loaded, PEFT configured, and moved to device:")
 model.print_trainable_parameters()
@@ -107,7 +104,7 @@ def tokenize_function(examples):
              f"Write a response that appropriately completes the request.\n\n"
              f"### Instruction:\n{instruction}\n\n"
              f"### Input:\n{input}\n\n"
-             f"### Response:\n{output}{tokenizer.eos_token}" # Ensure output ends with EOS token
+             f"### Response:\n{output}{tokenizer.eos_token}"
          )
          text.append(formatted_example)
 
@@ -127,6 +124,7 @@ training_args = TrainingArguments(
     num_train_epochs=NUM_TRAIN_EPOCHS,
     per_device_train_batch_size=BATCH_SIZE_PER_DEVICE,
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+    gradient_checkpointing=True,
     optim="paged_adamw_8bit",
     learning_rate=2e-4,
     lr_scheduler_type="cosine",
@@ -154,9 +152,11 @@ trainer = Trainer(
     data_collator=data_collator,
 )
 
+trainer.label_names = ["labels"]
+
 # --- actual fine-tune fr fr ---
 print(">>> Status: Starting fine-tuning...")
-trainer.train()
+trainer.train(resume_from_checkpoint="./model/llama-3.2-3b-4bit-finetuned/checkpoint-32000")
 print(">>> Status: Fine-tuning finished.")
 
 # --- save model ---
