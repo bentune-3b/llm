@@ -21,7 +21,7 @@ dataset_jsonl_path = "model/train_set.jsonl"
 #hyperparams
 TRAINING_DATA_SAMPLE_SIZE = 100000  #increase later
 NUM_TRAIN_EPOCHS = 3
-BATCH_SIZE_PER_DEVICE = 2
+BATCH_SIZE_PER_DEVICE = 4
 GRADIENT_ACCUMULATION_STEPS = 2
 MAX_SEQUENCE_LENGTH = 512
 DTYPE = torch.bfloat16
@@ -60,7 +60,8 @@ if tokenizer.pad_token is None:
 # --- load model in 16-bit precision ---
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=DTYPE
+    torch_dtype=DTYPE,
+    trust_remote_code=True
 )
 
 model.to(device)        #move to gpu
@@ -118,7 +119,6 @@ training_args = TrainingArguments(
     num_train_epochs=NUM_TRAIN_EPOCHS,
     per_device_train_batch_size=BATCH_SIZE_PER_DEVICE,
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-    gradient_checkpointing=True,
     optim="paged_adamw_8bit",
     learning_rate=2e-4,
     lr_scheduler_type="cosine",
