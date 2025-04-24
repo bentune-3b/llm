@@ -9,26 +9,30 @@ from transformers import (AutoTokenizer, AutoModelForCausalLM, TrainingArguments
                           Trainer, DataCollatorForLanguageModeling)
 from datasets import load_dataset, Dataset
 import torch
+import torch.backends.cudnn as cudnn
 import os
-from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 import random
+import numpy as np
+from sklearn.metrics import f1_score
 
 # --- configuration ---
 model_id = "meta-llama/Llama-3.2-3B"
-save_directory = "./model/llama-3.2-3b-4bit-finetuned"
+save_directory = "./model/llama-3.2-3b-finetuned"
 dataset_jsonl_path = "model/train_set.jsonl"
 
-#hyperparams
-TRAINING_DATA_SAMPLE_SIZE = 100000  #increase later
+# hyperparams
+TRAINING_DATA_SAMPLE_SIZE = 100000  # increase later
 NUM_TRAIN_EPOCHS = 3
 BATCH_SIZE_PER_DEVICE = 4
 GRADIENT_ACCUMULATION_STEPS = 2
 MAX_SEQUENCE_LENGTH = 512
+
 DTYPE = torch.bfloat16
 
 # --- device setup ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f">>> Status: Using device: {device}")
+cudnn.benchmark = True
 
 # --- validate dataset ---
 if not os.path.exists(dataset_jsonl_path):
@@ -61,32 +65,17 @@ if tokenizer.pad_token is None:
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
     torch_dtype=DTYPE,
-    trust_remote_code=True
+    trust_remote_code=True,
+    device_map="auto"
 )
 
 model.to(device)        #move to gpu
 
+# Enable gradient checkpointing for memory efficiency on A100
+model.gradient_checkpointing_enable()
+
 # resize token embeddings
 model.resize_token_embeddings(len(tokenizer))
-
-# --- QLoRA stuff ---
-model = prepare_model_for_kbit_training(model)
-
-# lora config
-peft_config = LoraConfig(
-    r=8,
-    lora_alpha=32,
-    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_dropout=0.05,
-    bias="none",
-    task_type="CAUSAL_LM",
-)
-
-# add lora configs to peft
-model = get_peft_model(model, peft_config)
-
-print(">>> Status: Model loaded, PEFT configured, and moved to device:")
-model.print_trainable_parameters()
 
 # --- tokenize dataset ---
 print(">>> Status: Tokenizing the dataset...")
@@ -113,13 +102,30 @@ tokenized_dataset = train_dataset.map(
 )
 print(">>> Status: Dataset tokenization complete.")
 
+# --- create eval split ---
+dataset_split = train_dataset.train_test_split(test_size=0.05, seed=42)
+train_dataset = dataset_split['train']
+eval_dataset = dataset_split['test']
+
+# --- compute metrics ---
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    shift_logits = logits[..., :-1, :].reshape(-1, logits.shape[-1])
+    shift_labels = labels[..., 1:].reshape(-1)
+    preds = np.argmax(shift_logits, axis=-1)
+    mask = shift_labels != tokenizer.pad_token_id
+    preds = preds[mask]
+    labels_filt = shift_labels[mask]
+    score = f1_score(labels_filt, preds, average="micro")
+    return {"f1": score}
+
 # --- fine tune setup ---
 training_args = TrainingArguments(
     output_dir=save_directory,
     num_train_epochs=NUM_TRAIN_EPOCHS,
     per_device_train_batch_size=BATCH_SIZE_PER_DEVICE,
     gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-    optim="paged_adamw_8bit",
+    optim="adamw_torch",
     learning_rate=2e-4,
     lr_scheduler_type="cosine",
     save_steps=500,
@@ -143,14 +149,16 @@ trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=tokenized_dataset,
+    eval_dataset=eval_dataset,
     data_collator=data_collator,
+    compute_metrics=compute_metrics,
 )
 
 trainer.label_names = ["labels"]
 
 # --- actual fine-tune fr fr ---
 print(">>> Status: Starting fine-tuning...")
-trainer.train(resume_from_checkpoint="./model/llama-3.2-3b-4bit-finetuned/checkpoint-32000")
+trainer.train()
 print(">>> Status: Fine-tuning finished.")
 
 # --- save model ---

@@ -18,6 +18,7 @@ import pandas as pd
 import pyarrow as pa
 from datasets import load_dataset, Dataset
 import math
+import os
 
 # --- normalizing functions ---
 def normalize_gsm8k(item):
@@ -25,13 +26,6 @@ def normalize_gsm8k(item):
         "instruction": "Solve the following grade-school math problem step by step.",
         "input": safe_strip(item["question"]),
         "output": safe_strip(item["answer"]),
-    }
-
-def normalize_grade_school_instructions(item):
-    return {
-        "instruction": safe_strip(item.get("INSTRUCTION", "")),
-        "input": "",
-        "output": safe_strip(item.get("RESPONSE", "")),
     }
 
 def normalize_mgsm_mt(item):
@@ -74,7 +68,7 @@ def normalize_hotpot_qa(item):
     }
 
 def normalize_hhh_alignment(item):
-    question = item.get("input") 
+    question = item.get("input")
     answer = ""
 
     targets = item.get("targets", {})
@@ -101,10 +95,10 @@ def normalize_mmlu(item):
     answer_key = item.get("Answer", "").strip().upper()
 
     # letter to index
-    answer_index = CHOICE_LETTERS.index(answer_key) 
+    answer_index = CHOICE_LETTERS.index(answer_key)
 
     # check validity
-    answer_text = choices[answer_index] 
+    answer_text = choices[answer_index]
 
     # format q with ans
     input_text = f"{safe_strip(item.get('Question', ''))}\nChoices:\n" + \
@@ -147,15 +141,14 @@ def normalize_truthful_qa(item):
 
 # --- constants ---
 DATASETS = {
-    # "qwedsacf/grade-school-math-instructions":         normalize_grade_school_instructions,
-    "juletxara/mgsm_mt":                               normalize_mgsm_mt,   
-    "deepmind/math_dataset":                           normalize_math,      
-    "openai/gsm8k":                                    normalize_gsm8k,     
-    "hotpot_qa":                                       normalize_hotpot_qa, 
-    "HuggingFaceH4/hhh_alignment":                     normalize_hhh_alignment, 
-    "openai/MMMLU":                                    normalize_mmlu,          
-    "trivia_qa":                                       normalize_trivia_qa,     
-    "domenicrosati/TruthfulQA":                        normalize_truthful_qa    
+    "juletxara/mgsm_mt":                               normalize_mgsm_mt,
+    "deepmind/math_dataset":                           normalize_math,
+    "openai/gsm8k":                                    normalize_gsm8k,
+    "hotpot_qa":                                       normalize_hotpot_qa,
+    "HuggingFaceH4/hhh_alignment":                     normalize_hhh_alignment,
+    "openai/MMMLU":                                    normalize_mmlu,
+    "trivia_qa":                                       normalize_trivia_qa,
+    "domenicrosati/TruthfulQA":                        normalize_truthful_qa
 }
 
 CONFIGS = {
@@ -231,10 +224,19 @@ def process(name, split="train"):
 def main():
     # collect examples
     all_samples = []
-    for ds_name in DATASETS:
+    # --- sample math datasets fully to ensure 100-150k math examples ---
+    math_datasets = {"openai/gsm8k", "juletxara/mgsm_mt", "deepmind/math_dataset"}
+    for ds_name in math_datasets:
         samples = process(ds_name, split="train")
-        # decide fraction
-        frac = 0.2 if ds_name == "openai/gsm8k" else 0.1
+        sampled = samples  # take 100% of math examples
+        print(f"---> Sampled {len(sampled)} from {ds_name} (100%)")
+        all_samples.extend(sampled)
+
+    # --- sample other datasets at reduced fraction ---
+    other_datasets = set(DATASETS) - math_datasets
+    for ds_name in other_datasets:
+        samples = process(ds_name, split="train")
+        frac = 0.1
         k = max(1, int(len(samples) * frac))
         sampled = random.sample(samples, k)
         print(f"---> Sampled {len(sampled)} from {ds_name} ({frac*100:.0f}%)")
@@ -249,11 +251,27 @@ def main():
     except Exception as e:
         print(f"--> Skipping StrategyQA due to load error: {e}")
 
-    # check if 120k samples have been collected yet
+    # mandatory math examples from given_Set.json
+    try:
+        raw_given = json.load(open("model/given_set.json", "r", encoding="utf-8"))
+        given_samples = []
+        for item in raw_given:
+            given_samples.append({
+                "instruction": "Solve the following grade-school math problem step by step.",
+                "input": safe_strip(item["question"]),
+                "output": safe_strip(item["answer"]),
+            })
+        print(f"---> Loaded {len(given_samples)} given_set samples")
+        all_samples.extend(given_samples)
+    except Exception as e:
+        print(f"--> Skipping given_Set due to load error: {e}")
+
+    # check if 150k samples have been collected yet
     total = len(all_samples)
-    if total > 120_000:
-        all_samples = random.sample(all_samples, 120_000)
-        print(f"---> Down-sampled combined pool from {total} to 120000")
+    target_size = 150_000
+    if total > target_size:
+        all_samples = random.sample(all_samples, target_size)
+        print(f"---> Down-sampled combined pool from {total} to {target_size}")
 
     # -----------------
 
@@ -261,8 +279,9 @@ def main():
     random.seed(42)
     random.shuffle(all_samples)
 
+    os.makedirs("model", exist_ok=True)
     # write to jsonl alpaca style
-    output_file = "train_set.jsonl"
+    output_file = "model/train_set.jsonl"
     print(f">>> Writing {len(all_samples)} total samples to {output_file}")
     with open(output_file, "w", encoding="utf-8") as fw:
         for sample in all_samples:
