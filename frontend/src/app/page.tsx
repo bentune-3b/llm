@@ -58,13 +58,13 @@ export default function ChatPage() {
     <div className="flex flex-col h-screen bg-black">
       {/* Header with logo */}
       <header className="flex items-center p-4 border-b bg-black shadow-md">
-        <Image src="/logo.png" alt="Logo" width={275} height={275} className="mr-3" />
+        <Image src="/logo.png" alt="Logo" width={200} height={200} className="mr-3 sm:w-1/2 md:w-1/3" />
       </header>
 
       {/* Message Area */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4 sm:space-y-2">
         {messages.map((msg, i) => (
-          <div key={i} className={`mb-4 flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
               className={`max-w-md px-4 py-2 rounded-lg ${
                 msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-800'
@@ -78,18 +78,18 @@ export default function ChatPage() {
       </div>
 
       {/* Input Box */}
-      <div className="p-4 border-t bg-black">
+      <div className="p-4 border-t bg-black sm:px-2 md:px-4">
         <textarea
           rows={1}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Type your message..."
-          className="w-full p-3 border rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full p-3 border rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 sm:text-sm md:text-base"
         />
         <button
           onClick={sendMessage}
-          className="mt-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded float-right"
+          className="mt-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded float-right sm:w-full md:w-auto"
           disabled={loading}
         >
           Send
@@ -98,3 +98,6 @@ export default function ChatPage() {
     </div>
   );
 }
+
+
+
