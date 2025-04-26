@@ -160,6 +160,6 @@ trainer = Trainer(
 )
 
 if __name__ == "__main__":
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True)
     # Save final adapter for downstream merging or inference
     model.save_pretrained(os.path.join(OUTPUT_DIR, "final_adapter"))
