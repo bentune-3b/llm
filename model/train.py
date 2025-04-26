@@ -13,7 +13,6 @@ from peft import LoraConfig, get_peft_model
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
-    DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
     EarlyStoppingCallback,
@@ -65,15 +64,15 @@ def format_example(ex):
 train_ds = train_ds.map(format_example, remove_columns=train_ds.column_names)
 eval_ds  = eval_ds.map(format_example,  remove_columns=eval_ds.column_names)
 
-# 5. Tokenizer
+# 5. Tokenizer & tokenization
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, use_fast=True)
 tokenizer.pad_token = tokenizer.eos_token
 
 tokenize = partial(
     tokenizer,
     truncation=True,
-    padding="max_length",
-    max_length=8192,
+    padding=False,       # no padding here
+    max_length=4096,     # sequence length set to 4096
     return_tensors=None,
 )
 
@@ -87,7 +86,7 @@ eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
 # 6. Model + LoRA
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
-cfg.rope_scaling = {"type": "dynamic", "factor": 2.0}   # 4096 × 2 → 8192
+cfg.rope_scaling = {"type": "dynamic", "factor": 2.0}  # 2048 x 2 -> 4096
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
@@ -96,8 +95,7 @@ base_model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
 )
 base_model.gradient_checkpointing_enable()
-# disable KV-cache when using gradient checkpointing
-base_model.config.use_cache = False
+base_model.config.use_cache = False  # disable KV cache with gradient checkpointing
 
 peft_cfg = LoraConfig(
     r=16,
@@ -109,12 +107,57 @@ peft_cfg = LoraConfig(
 )
 model = get_peft_model(base_model, peft_cfg)
 
-# 7. Training arguments
+# 7. Efficient sequence-packing collator
+class PackedDataCollator:
+    def __init__(self, tokenizer, max_length=4096):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.eos_id = tokenizer.eos_token_id
+        self.pad_id = tokenizer.pad_token_id
+
+    def __call__(self, features):
+        all_ids = [f["input_ids"] for f in features]
+        packed_input_ids = []
+        packed_labels = []
+        buffer = []
+
+        for ids in all_ids:
+            # flush if buffer + ids + eos would overflow
+            if len(buffer) + len(ids) + 1 > self.max_length:
+                seq = buffer + [self.eos_id]
+                pad_len = self.max_length - len(seq)
+                seq += [self.pad_id] * pad_len
+                packed_input_ids.append(seq)
+                packed_labels.append(seq.copy())
+                buffer = []
+            buffer += ids + [self.eos_id]
+
+        # flush any remainder
+        if buffer:
+            seq = buffer
+            pad_len = self.max_length - len(seq)
+            seq += [self.pad_id] * pad_len
+            packed_input_ids.append(seq)
+            packed_labels.append(seq.copy())
+
+        batch_input = torch.tensor(packed_input_ids, dtype=torch.long)
+        attention_mask = (batch_input != self.pad_id).long()
+        batch_labels = torch.tensor(packed_labels, dtype=torch.long)
+
+        return {
+            "input_ids": batch_input,
+            "attention_mask": attention_mask,
+            "labels": batch_labels,
+        }
+
+data_collator = PackedDataCollator(tokenizer, max_length=4096)
+
+# 8. Training arguments
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    per_device_train_batch_size=1,  # Reduced from 2 to 1 for 8k context
-    gradient_accumulation_steps=16,  # Increased from 8 to 16 to compensate
+    per_device_train_batch_size=2,     # 2 sequences per device
+    gradient_accumulation_steps=16,    # effective batch ~32
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
@@ -131,13 +174,6 @@ args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     report_to=["tensorboard", "wandb"],
-)
-
-# 8. Data collator
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer,
-    mlm=False,
-    pad_to_multiple_of=8
 )
 
 # 9. Metrics
@@ -167,5 +203,5 @@ trainer = Trainer(
 
 if __name__ == "__main__":
     trainer.train()
-    # Save final adapter for downstream merging or inference
+    # Save the final adapter for downstream merging or inference
     model.save_pretrained(os.path.join(OUTPUT_DIR, "final_adapter"))

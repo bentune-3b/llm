@@ -18,7 +18,7 @@ TRAIN_IN="model/train_set.jsonl"
 VAL_IN="model/val_set.jsonl"
 TRAIN_OUT="model/train_set_cleaned.jsonl"
 VAL_OUT="model/val_set_cleaned.jsonl"
-MAX_TOK=8192
+MAX_TOK=4096
 
 TOKENIZER=AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B",use_fast=True)
 URL_RE=re.compile(r"https?://\S+")
