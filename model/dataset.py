@@ -1,294 +1,275 @@
 # dataset.py
 # ------------------------
-# prepares instruction tuned dataset for training
-#
-# notes: strategy qa dataset loading is loaded manually.
-#        the json file is deleted after training datapool
-#        is loaded, but if you need to load it again,
-#        download the train split raw json file and place
-#        it in the llm dir
+# Prepare a mixed, token‐balanced JSONL training + validation split
+# for LLaMA-3.2-3B instruction + reasoning + QA + alignment fine-tuning.
 # ------------------------
 # Team: Bentune 3b
 # Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
-import argparse
 import json
-import random
-import pandas as pd
-import pyarrow as pa
-from datasets import load_dataset, Dataset
-import math
 import os
 
-# --- normalizing functions ---
-def normalize_gsm8k(item):
+from datasets import load_dataset, interleave_datasets, DatasetDict, Dataset
+
+# dataset-specific load arguments for configs
+LOAD_KWARGS = {
+    "gsm8k": {"name": "main"},
+    "hotpot_qa": {"name": "distractor"},
+    "mandarjoshi/trivia_qa": {"name": "rc"},
+    "domenicrosati/TruthfulQA": {},
+}
+
+# all subsets for maveriq/bigbenchhard
+BIGBENCH_SUBSETS = [
+    "boolean_expressions",
+    "causal_judgement",
+    "date_understanding",
+    "disambiguation_qa",
+    "dyck_languages",
+    "formal_fallacies",
+    "geometric_shapes",
+    "hyperbaton",
+    "logical_deduction_five_objects",
+    "logical_deduction_seven_objects",
+    "logical_deduction_three_objects",
+    "movie_recommendation",
+    "multistep_arithmetic_two",
+    "navigate",
+    "object_counting",
+    "penguins_in_a_table",
+    "reasoning_about_colored_objects",
+    "ruin_names",
+    "salient_translation_error_detection",
+    "snarks",
+    "sports_understanding",
+    "temporal_sequences",
+    "tracking_shuffled_objects_five_objects",
+    "tracking_shuffled_objects_seven_objects",
+    "tracking_shuffled_objects_three_objects",
+    "web_of_lies",
+    "word_sorting",
+]
+
+# ——— user configs ———
+VAL_SPLIT = 0.1  # frac
+SEED = 42
+
+# --- token shares ---
+# none -> use all examples
+# use number of examples
+MIX_CONFIG = {
+    "general": {
+        "datasets": [
+            ("yahma/alpaca-cleaned", None),
+            ("Cleanlab/databricks-dolly-15k-cleaned", None),
+            ("Nutanix/oasst1-processed-kto-cleaned", None),
+        ],
+        "weight": 0.40
+    },
+    "reasoning": {
+        "datasets": [
+            ("gsm8k", None),
+            ("maveriq/bigbenchhard", None),
+            ("voidful/StrategyQA", None),
+            ("tau/commonsense_qa", None),
+        ],
+        "weight": 0.30
+    },
+    "knowledge": {
+        "datasets": [
+            ("hotpot_qa", None),
+            ("sentence-transformers/natural-questions", None),
+            ("mandarjoshi/trivia_qa", None),
+        ],
+        "weight": 0.15
+    },
+    "alignment": {
+        "datasets": [
+            ("Anthropic/hh-rlhf", None),
+            ("domenicrosati/TruthfulQA", None),
+            ("openai/webgpt_comparisons", None),
+        ],
+        "weight": 0.15
+    }
+}
+
+
+def normalize(example, source):
+    if source == "voidful/StrategyQA":
+        return normalize_strategyqa(example)
+    """
+    map each set to its fields
+    tweak field names per-source as you include more datasets
+    """
+    if source == "gsm8k":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example["question"],
+            "output": example["answer"],
+        }
+    if source == "yahma/alpaca-cleaned":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example.get("input", ""),
+            "output": example["output"],
+        }
+
+    if source == "Cleanlab/databricks-dolly-15k-cleaned":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example.get("context", ""),
+            "output": example["response"],
+        }
+
+    if source == "Anthropic/hh-rlhf":
+        # convert chosen/rejected → ORPO/DPO triplet
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": "",
+            "output": f"<good>\n{example['chosen']}\n<bad>\n{example['rejected']}",
+        }
+
+    if source == "Nutanix/oasst1-processed-kto-cleaned":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example.get("prompt", ""),
+            "output": example["completion"],
+        }
+
+    if source == "maveriq/bigbenchhard":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example.get("input", ""),
+            "output": example["target"],
+        }
+
+    if source == "hotpot_qa":
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": f"Context: {example.get('context', '')}\nQuestion: {example.get('question', '')}",
+            "output": example.get("answer", "")
+        }
+
+    if source == "sentence-transformers/natural-questions":
+        # flatten natural-questions to instruction schema
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": f"Context: {example.get('context_document', '')}\nQuestion: {example.get('question', '')}",
+            "output": example.get("value", "")
+        }
+    if source == "mandarjoshi/trivia_qa":
+        # TriviaQA answers come as nested dicts; extract the text value
+        raw_answer = example.get("answer", "")
+        if isinstance(raw_answer, dict):
+            raw_answer = raw_answer.get("value", "")
+        return {
+            "instruction": "You are an honest, respectful and helpful assistant.",
+            "input": example.get("question", ""),
+            "output": raw_answer,
+        }
+
+    # fallback --
     return {
-        "instruction": "Solve the following grade-school math problem step by step.",
-        "input": safe_strip(item["question"]),
-        "output": safe_strip(item["answer"]),
+        "instruction": "You are an honest, respectful and helpful assistant.",
+        "input": example.get("input", ""),
+        "output": example.get("output", example.get("answer", "")),
     }
 
-def normalize_mgsm_mt(item):
+def normalize_strategyqa(item):
+    """
+    Turn a StrategyQA example into the {instruction, input, output} schema:
+      - instruction: a step-by-step yes/no QA task
+      - input: the question plus all facts
+      - output: "Yes" or "No"
+    """
+    instruction = "Answer the following yes/no question using the given facts, showing your reasoning step by step."
+    facts_text = " ".join(item.get("facts", []))
+    input_text = f"Question: {item.get('question', '')}\nFacts: {facts_text}"
+    output_text = "Yes" if item.get("answer", False) else "No"
     return {
-        "instruction": "Resuelva el siguiente problema de matemáticas paso a paso.",
-        "input": safe_strip(item.get("question", "")),
-        "output": safe_strip(item.get("answer", "")),
-    }
-
-def normalize_math(item):
-    return {
-        "instruction": "Solve the following symbolic math problem:",
-        "input": safe_strip(item.get("question", "")),
-        "output": safe_strip(item.get("solution", item.get("answer", ""))),
-    }
-
-def normalize_hotpot_qa(item):
-    # extract and clean question
-    raw_q = item.get("question", "")
-    q_text = safe_strip(raw_q)
-
-    # context list
-    raw_ctx = item.get("context", "")
-    if isinstance(raw_ctx, list):
-        parts = []
-        for c in raw_ctx:
-            parts.append(safe_strip(c))
-        ctx_text = " ".join(parts)
-    else:
-        ctx_text = safe_strip(raw_ctx)
-
-    # answer
-    raw_a = item.get("answer", "")
-    a_text = safe_strip(raw_a)
-
-    return {
-        "instruction": "Answer the following question using the given context:",
-        "input": f"Question: {q_text}\nContext: {ctx_text}",
-        "output": a_text,
-    }
-
-def normalize_hhh_alignment(item):
-    question = item.get("input")
-    answer = ""
-
-    targets = item.get("targets", {})
-    choices = targets.get("choices", [])
-    labels = targets.get("labels", [])
-
-    if 1 in labels:
-        answer = choices[labels.index(1)]
-
-    return {
-        "instruction": "Provide a helpful and harmless response to the instruction.",
-        "input": safe_strip(question),
-        "output": safe_strip(answer),
-    }
-
-# mcq keys
-CHOICE_LETTERS = ["A", "B", "C", "D"]
-
-def normalize_mmlu(item):
-    # get ans choices
-    choices = [item.get(letter, "") for letter in CHOICE_LETTERS]
-
-    # correct ans
-    answer_key = item.get("Answer", "").strip().upper()
-
-    # letter to index
-    answer_index = CHOICE_LETTERS.index(answer_key)
-
-    # check validity
-    answer_text = choices[answer_index]
-
-    # format q with ans
-    input_text = f"{safe_strip(item.get('Question', ''))}\nChoices:\n" + \
-                 "\n".join([f"{letter}) {safe_strip(choice)}" for letter, choice in zip(CHOICE_LETTERS, choices)])
-
-    return {
-        "instruction": "Answer the following multiple-choice question:",
+        "instruction": instruction,
         "input": input_text,
-        "output": safe_strip(answer_text),
+        "output": output_text,
     }
 
-def normalize_strategy_qa(item):
-    # Extract and clean question
-    question = safe_strip(item.get("question", ""))
 
-    # Normalize answer to "Yes"/"No"
-    answer = "Yes" if item.get("answer") else "No"
-
-    # Drop problematic fields like 'evidence' that cause Arrow conversion issues
-    return {
-        "instruction": "Answer the following yes/no question:",
-        "input": question,
-        "output": answer,
-    }
-
-def normalize_trivia_qa(item):
-    return {
-        "instruction": "Answer the following trivia question:",
-        "input": safe_strip(item.get("question", "")),
-        "output": safe_strip(item.get("answer", "")),
-    }
-
-def normalize_truthful_qa(item):
-    return {
-        "instruction": "Answer the following trivia question truthfully:",
-        "input": safe_strip(item.get("Question", "")),
-        "output": safe_strip(item.get("Best Answer", "")),
-    }
-# -----------------
-
-# --- constants ---
-DATASETS = {
-    "juletxara/mgsm_mt":                               normalize_mgsm_mt,
-    "deepmind/math_dataset":                           normalize_math,
-    "openai/gsm8k":                                    normalize_gsm8k,
-    "hotpot_qa":                                       normalize_hotpot_qa,
-    "HuggingFaceH4/hhh_alignment":                     normalize_hhh_alignment,
-    "openai/MMMLU":                                    normalize_mmlu,
-    "trivia_qa":                                       normalize_trivia_qa,
-    "domenicrosati/TruthfulQA":                        normalize_truthful_qa
-}
-
-CONFIGS = {
-    "openai/gsm8k": "main",
-    "juletxara/mgsm_mt": "nllb-200-distilled-600M",
-    "deepmind/math_dataset": "arithmetic__add_or_sub",
-    "hotpot_qa": "distractor",
-    "HuggingFaceH4/hhh_alignment": "harmless",
-    "voidful/StrategyQA": "default",
-    "trivia_qa": "unfiltered",
-}
-
-# datasets requiring streaming to avoid arrow conversion issues
-STREAMING_DATASETS = ["voidful/StrategyQA"]
-
-# override split names for datasets without a 'train' split
-SPLIT_OVERRIDES = {
-    "openai/MMMLU": "test",
-    "HuggingFaceH4/hhh_alignment": "test",
-}
-
-# -----------------
-
-# --- helpers ---
-
-# helper to safely strip non-string values
-def safe_strip(value):
-    if hasattr(value, "strip"):
-        return value.strip()
-    return str(value)
-
-# -----------------
-
-# --- processing ---
-
-def process(name, split="train"):
+def load_and_prep(source, split="train", num_samples=None):
     """
-    processes given hugging face dataset
-    -- includes instruction tuning
-    :param name: hf dataset id
-    :param split: train or test
-    :return: dataset
+    dataset loader function
     """
-    print(f">>> Loading {name}:{split}")
+    # special case: include all BigBenchHard subsets
+    if source == "maveriq/bigbenchhard":
+        parts = []
+        for subset in BIGBENCH_SUBSETS:
+            parts.append(load_dataset(source, name=subset, split=split))
+        ds = interleave_datasets(parts, seed=SEED)
 
-    # determine effective split
-    ds_split = SPLIT_OVERRIDES.get(name, split)
-    # prepare load parameters
-    load_kwargs = {"split": ds_split, "trust_remote_code": True}
-    if name in STREAMING_DATASETS:
-        load_kwargs["streaming"] = True
+    elif source == "voidful/StrategyQA":
+        # load and preprocess local StrategyQA data
+        file_path = os.path.join("model", f"strategyqa_{split}.json")
+        with open(file_path, "r") as f:
+            raw = json.load(f)
+        processed = []
+        for item in raw:
+            # keep only question, facts, and answer with consistent types
+            q = item.get("question", "")
+            facts = item.get("facts", [])
+            if not isinstance(facts, list):
+                facts = []
+            ans = item.get("answer", False)
+            processed.append({"question": q, "facts": facts, "answer": ans})
+        ds = Dataset.from_list(processed)
 
-    try:
-        if name in CONFIGS:
-            ds = load_dataset(name, CONFIGS[name], **load_kwargs)
-        else:
-            ds = load_dataset(name, **load_kwargs)
-    except Exception as e:
-        print(f"--> Skipping {name} due to load error: {e}")
-        return []
+    else:
+        # existing generic load logic
+        load_args = {"split": split}
+        cfg = LOAD_KWARGS.get(source, {})
+        for k, v in cfg.items():
+            if v is not None:
+                load_args[k] = v
+        ds = load_dataset(source, **load_args)
+    if num_samples:
+        ds = ds.shuffle(seed=SEED).select(range(num_samples))
+    # map to unified schema
+    return ds.map(lambda ex: normalize(ex, source), remove_columns=ds.column_names)
 
-    norm = DATASETS[name]                       # fetch the normalizing function from dict
-    out = []                                    # array to maintain all dataset
-    for ex in ds:
-        s = norm(ex)
-        if s["instruction"] and s["output"]:
-            out.append(s)
-    print(f"--> {len(out)} valid samples from {name}")
-    return out
-
-# -----------------
 
 def main():
-    # collect examples
-    all_samples = []
-    # --- sample math datasets fully to ensure 100-150k math examples ---
-    math_datasets = {"openai/gsm8k", "juletxara/mgsm_mt", "deepmind/math_dataset"}
-    for ds_name in math_datasets:
-        samples = process(ds_name, split="train")
-        sampled = samples  # take 100% of math examples
-        print(f"---> Sampled {len(sampled)} from {ds_name} (100%)")
-        all_samples.extend(sampled)
+    """
+    main function
 
-    # --- sample other datasets at reduced fraction ---
-    other_datasets = set(DATASETS) - math_datasets
-    for ds_name in other_datasets:
-        samples = process(ds_name, split="train")
-        frac = 0.1
-        k = max(1, int(len(samples) * frac))
-        sampled = random.sample(samples, k)
-        print(f"---> Sampled {len(sampled)} from {ds_name} ({frac*100:.0f}%)")
-        all_samples.extend(sampled)
+    -- load all datasets into buckets
+    -- mix buckets
+    -- split into training and validation sets
+    -- write to jsonl
+    """
+    # --- 1 load & sample each bucket
+    buckets = {}
+    for bucket, cfg in MIX_CONFIG.items():
+        parts = []
+        for (ds_name, n) in cfg["datasets"]:
+            parts.append(load_and_prep(ds_name, split="train", num_samples=n))
+        # interleave within the bucket *evenly*
+        buckets[bucket] = interleave_datasets(parts, seed=SEED)
 
-    # strategy qa dataset
-    try:
-        raw_data = [normalize_strategy_qa(item) for item in json.load(open("strategyqa_train.json"))]
-        clean_data = [item for item in raw_data if item["instruction"] and item["output"]]
-        print(f"---> Loaded {len(clean_data)} StrategyQA samples")
-        all_samples.extend(clean_data)
-    except Exception as e:
-        print(f"--> Skipping StrategyQA due to load error: {e}")
+    # 2 mix all buckets by weight
+    mixed = interleave_datasets(
+        [buckets[b] for b in MIX_CONFIG],
+        probabilities=[MIX_CONFIG[b]["weight"] for b in MIX_CONFIG],
+        seed=SEED
+    )
 
-    # mandatory math examples from given_Set.json
-    try:
-        raw_given = json.load(open("model/given_set.json", "r", encoding="utf-8"))
-        given_samples = []
-        for item in raw_given:
-            given_samples.append({
-                "instruction": "Solve the following grade-school math problem step by step.",
-                "input": safe_strip(item["question"]),
-                "output": safe_strip(item["answer"]),
-            })
-        print(f"---> Loaded {len(given_samples)} given_set samples")
-        all_samples.extend(given_samples)
-    except Exception as e:
-        print(f"--> Skipping given_Set due to load error: {e}")
+    # 3 split into train / val
+    ds_dict = mixed.train_test_split(test_size=VAL_SPLIT, seed=SEED)
+    ds: DatasetDict = ds_dict
 
-    # check if 150k samples have been collected yet
-    total = len(all_samples)
-    target_size = 150_000
-    if total > target_size:
-        all_samples = random.sample(all_samples, target_size)
-        print(f"---> Down-sampled combined pool from {total} to {target_size}")
-
-    # -----------------
-
-    # shuffle dataset
-    random.seed(42)
-    random.shuffle(all_samples)
-
-    os.makedirs("model", exist_ok=True)
-    # write to jsonl alpaca style
-    output_file = "model/train_set.jsonl"
-    print(f">>> Writing {len(all_samples)} total samples to {output_file}")
-    with open(output_file, "w", encoding="utf-8") as fw:
-        for sample in all_samples:
-            fw.write(json.dumps(sample, ensure_ascii=False) + "\n")
-
-    print("Done.")
-
+    # 4 write out to JSONL
+    for split in ["train", "test"]:
+        out_path = "model/train_set.jsonl" if split == "train" else "model/val_set.jsonl"
+        with open(out_path, "w") as f:
+            for ex in ds[split]:
+                f.write(json.dumps(ex) + "\n")
+        print(f"Wrote {len(ds[split])} examples → {out_path}")
 
 if __name__ == "__main__":
     main()
