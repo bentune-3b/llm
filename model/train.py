@@ -72,7 +72,7 @@ tokenize = partial(
     tokenizer,
     truncation=True,
     padding="max_length",
-    max_length=1024,
+    max_length=8192,
     return_tensors=None,
 )
 
