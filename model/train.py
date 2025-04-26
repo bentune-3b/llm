@@ -92,6 +92,8 @@ base_model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
 )
 base_model.gradient_checkpointing_enable()
+# disable KV-cache when using gradient checkpointing
+base_model.config.use_cache = False
 
 peft_cfg = LoraConfig(
     r=16,
@@ -125,6 +127,7 @@ args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     report_to=["tensorboard", "wandb"],
+    use_cache=False,  # ensure Trainer won't re-enable it
 )
 
 # 8. Data collator
@@ -160,6 +163,6 @@ trainer = Trainer(
 )
 
 if __name__ == "__main__":
-    trainer.train(resume_from_checkpoint=True)
+    trainer.train()
     # Save final adapter for downstream merging or inference
     model.save_pretrained(os.path.join(OUTPUT_DIR, "final_adapter"))
