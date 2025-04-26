@@ -52,7 +52,7 @@ MIX_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "knowledge": {
         "datasets": [
-            ("hotpot_qa", None),
+            ("hotpot_qa", 20000),
             ("sentence-transformers/natural-questions", None),
             ("mandarjoshi/trivia_qa", None),
         ],
