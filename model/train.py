@@ -18,6 +18,7 @@ from transformers import (
     TrainingArguments,
     EarlyStoppingCallback,
     set_seed,
+    LlamaConfig,
 )
 
 # 1. Reproducibility
@@ -85,8 +86,11 @@ train_ds = train_ds.map(tokenize_fn, batched=True, remove_columns=["text"])
 eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
 # 6. Model + LoRA
+cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
+cfg.rope_scaling = {"type": "dynamic", "factor": 2.0}   # 4096 × 2 → 8192
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
+    config=cfg,
     torch_dtype=torch.bfloat16,
     device_map="auto",
     trust_remote_code=True,
@@ -109,8 +113,8 @@ model = get_peft_model(base_model, peft_cfg)
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=8,
+    per_device_train_batch_size=1,  # Reduced from 2 to 1 for 8k context
+    gradient_accumulation_steps=16,  # Increased from 8 to 16 to compensate
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
@@ -127,7 +131,6 @@ args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     report_to=["tensorboard", "wandb"],
-    use_cache=False,  # ensure Trainer won't re-enable it
 )
 
 # 8. Data collator
