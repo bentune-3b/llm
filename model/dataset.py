@@ -189,7 +189,11 @@ def main() -> None:
             count = len(ds_part)
             print(f"  {ds_name}: {count} examples")
             parts.append(ds_part)
-        buckets[bucket_name] = interleave_datasets(parts, seed=SEED)
+        buckets[bucket_name] = interleave_datasets(
+            parts,
+            seed=SEED,
+            stopping_strategy="all_exhausted"
+        )
         print(f"Bucket '{bucket_name}' total after interleaving: {len(buckets[bucket_name])} examples")
 
     # 2. Mix buckets by weight and report
@@ -197,6 +201,7 @@ def main() -> None:
         [buckets[k] for k in MIX_CONFIG],
         probabilities=[MIX_CONFIG[k]["weight"] for k in MIX_CONFIG],
         seed=SEED,
+        stopping_strategy="all_exhausted"
     )
     print(f"\nMixed dataset total: {len(mixed)} examples")
 
