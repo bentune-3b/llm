@@ -24,7 +24,7 @@ from transformers import (
 set_seed(42)
 
 # 2. Paths (relative to project root)
-BASE_MODEL_DIR = "./model/downloaded_models/vanilla-llama-3.2-3b-bf16"
+BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
