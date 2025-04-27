@@ -1,2 +1,0 @@
-model/train_set.jsonl filter=lfs diff=lfs merge=lfs -text
-model/train_set_cleaned.jsonl filter=lfs diff=lfs merge=lfs -text
