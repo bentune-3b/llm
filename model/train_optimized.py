@@ -24,11 +24,13 @@ from transformers import (
     Trainer,
     TrainingArguments,
     EarlyStoppingCallback,
+    BitsAndBytesConfig,          # NEW: For 8-bit quantization
     set_seed,
     LlamaConfig,
 )
 
 # 0. DeepSpeed configuration file (ds_config.json) must exist alongside this script.
+DS_CONFIG = os.path.join(os.path.dirname(__file__), "ds_config.json")  # absolute path
 
 # 1. Reproducibility
 set_seed(42)
@@ -95,11 +97,20 @@ eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
 # 6. Model + LoRA + 8-bit
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
+
+# Configure 8-bit quantization
+bnb_cfg = BitsAndBytesConfig(
+    load_in_8bit=True,
+    llm_int8_threshold=6.0,
+    llm_int8_skip_modules=None,
+)
+
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
+    quantization_config=bnb_cfg,       # Use BitsAndBytesConfig instead of load_in_8bit
+    attn_implementation="flash_attention_2",  # Enable FlashAttention
     torch_dtype=torch.bfloat16,
-    load_in_8bit=True,          # bitsandbytes 8-bit
     device_map="auto",
     trust_remote_code=True,
 )
@@ -171,11 +182,11 @@ data_collator = PackedDataCollator(tokenizer, max_length=2048)
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    deepspeed="ds_config.json",         # (1) DeepSpeed ZeRO-2
-    optim="adamw_bnb_8bit",             # (8) 8-bit AdamW
-    per_device_train_batch_size=4,      # (3) doubled batch
-    gradient_accumulation_steps=8,      # maintain effective batch size
-    dataloader_num_workers=4,           # (4) parallel data loading
+    deepspeed=DS_CONFIG,               # Use absolute path
+    optim="adamw_bnb_8bit",
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=8,
+    dataloader_num_workers=4,
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
