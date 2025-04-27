@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-LoRA supervised fine-tuning for LLaMA-3 3.2B on ASU SOL
-with DeepSpeed ZeRO, FlashAttention, 8-bit optimizer,
-larger batch, and multiple workers.
+LoRA fine-tuning of LLaMA-3 3.2 B on one A100 (ASU SOL)
+• DeepSpeed ZeRO-2
+• 8-bit quantisation (bitsandbytes)
+• Flash-Attention 2 if available, else torch-SDPA
+• Sequence length 2048, packed batches
 """
 
 import os
 from functools import partial
+import importlib
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
@@ -21,30 +24,29 @@ from transformers import (
     LlamaConfig,
 )
 
-# ------------------------------------------------------------------
-# 0. Paths and constants
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
+# 0. Paths & constants
+# ──────────────────────────────────────────────────────────────
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
-DS_CONFIG      = os.path.abspath("model/ds_config.json")   # absolute
+DS_CONFIG      = os.path.abspath("model/ds_config.json")   # must exist
+SEQ_LEN        = 2048
 set_seed(42)
 
-# ------------------------------------------------------------------
-# 1. Dataset prep
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
+# 1. Dataset
+# ──────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a helpful, respectful and honest assistant. "
     "Always answer as concisely as possible while remaining accurate."
 )
 
-def build_prompt(instruction: str, inp: str | None = None) -> str:
+def build_prompt(instr: str, inp: str | None = None) -> str:
     parts = [
-        "<s>[INST] <<SYS>>\n",
-        SYSTEM_PROMPT,
-        "\n<</SYS>>\n\n",
-        instruction.strip()
+        "<s>[INST] <<SYS>>\n", SYSTEM_PROMPT, "\n<</SYS>>\n\n",
+        instr.strip()
     ]
     if inp:
         parts.append(f"\n{inp.strip()}")
@@ -56,53 +58,52 @@ raw = load_dataset(
     data_files={"train": TRAIN_FILE, "validation": VAL_FILE},
     split=None
 )
-train_ds = raw["train"]
-eval_ds  = raw["validation"]
+train_ds, eval_ds = raw["train"], raw["validation"]
 
-def format_example(ex):
-    prompt   = build_prompt(ex["instruction"], ex.get("input"))
-    response = ex["output"].strip()
-    return {"text": f"{prompt}\n{response}</s>"}
+def format_ex(ex):
+    return {
+        "text": f"{build_prompt(ex['instruction'], ex.get('input'))}\n{ex['output'].strip()}</s>"
+    }
 
-train_ds = train_ds.map(format_example, remove_columns=train_ds.column_names)
-eval_ds  = eval_ds.map(format_example,  remove_columns=eval_ds.column_names)
+train_ds = train_ds.map(format_ex, remove_columns=train_ds.column_names)
+eval_ds  = eval_ds.map(format_ex,  remove_columns=eval_ds.column_names)
 
-# Tokenizer & tokenization
-tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, use_fast=True)
-tokenizer.pad_token = tokenizer.eos_token
+tok = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, use_fast=True)
+tok.pad_token = tok.eos_token
 
-tokenize = partial(
-    tokenizer,
-    truncation=True,
-    padding=False,
-    max_length=2048,
-)
+tokenize = partial(tok, truncation=True, padding=False, max_length=SEQ_LEN)
 
-def tokenize_fn(batch):
-    tokens = tokenize(batch["text"])
-    tokens["labels"] = tokens["input_ids"].copy()
-    return tokens
+def tok_fn(batch):
+    out = tokenize(batch["text"])
+    out["labels"] = out["input_ids"].copy()
+    return out
 
-train_ds = train_ds.map(tokenize_fn, batched=True, remove_columns=["text"])
-eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
+train_ds = train_ds.map(tok_fn, batched=True, remove_columns=["text"])
+eval_ds  = eval_ds.map(tok_fn,  batched=True, remove_columns=["text"])
 
-# ------------------------------------------------------------------
-# 2. Model + LoRA + 8-bit + FlashAttention
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
+# 2. Model (8-bit) + LoRA
+# ──────────────────────────────────────────────────────────────
 bnb_cfg = BitsAndBytesConfig(load_in_8bit=True)
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
 
-base_model = AutoModelForCausalLM.from_pretrained(
+# Choose the fastest attention impl available
+if importlib.util.find_spec("flash_attn"):
+    attn_impl = "flash_attention_2"
+else:
+    attn_impl = "sdpa"                       # torch’s fused SDPA
+
+base = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
     quantization_config=bnb_cfg,
-    attn_implementation="flash_attention_2",   # activates flash-attention if available
-    torch_dtype=torch.bfloat16,
+    attn_implementation=attn_impl,
     device_map="auto",
+    torch_dtype=torch.bfloat16,
     trust_remote_code=True,
 )
-base_model.gradient_checkpointing_enable()
-base_model.config.use_cache = False
+base.gradient_checkpointing_enable()
+base.config.use_cache = False
 
 lora_cfg = LoraConfig(
     r=16, lora_alpha=32,
@@ -111,15 +112,46 @@ lora_cfg = LoraConfig(
     bias="none",
     task_type="CAUSAL_LM",
 )
-model = get_peft_model(base_model, lora_cfg)
+model = get_peft_model(base, lora_cfg)
 
-# ------------------------------------------------------------------
-# 3. TrainingArguments
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
+# 3. Packed collator
+# ──────────────────────────────────────────────────────────────
+class PackedCollator:
+    def __init__(self, tokenizer, max_len=SEQ_LEN):
+        self.eos, self.pad = tokenizer.eos_token_id, tokenizer.pad_token_id
+        self.max_len = max_len
+
+    def __call__(self, feats):
+        ids = [f["input_ids"] for f in feats]
+        buf, batch = [], []
+        for seq in ids:
+            if len(buf) + len(seq) + 1 > self.max_len:
+                if buf:
+                    batch.append(buf)
+                    buf = []
+            buf += seq + [self.eos]
+        if buf:
+            batch.append(buf)
+        padded = [
+            s + [self.pad] * (self.max_len - len(s)) for s in batch
+        ]
+        tens = torch.tensor(padded, dtype=torch.long)
+        return {
+            "input_ids": tens,
+            "attention_mask": (tens != self.pad).long(),
+            "labels": tens.clone(),
+        }
+
+collate_fn = PackedCollator(tok)
+
+# ──────────────────────────────────────────────────────────────
+# 4. TrainingArguments
+# ──────────────────────────────────────────────────────────────
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    deepspeed=DS_CONFIG,                 # absolute path that exists
+    deepspeed=DS_CONFIG,
     optim="adamw_bnb_8bit",
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
@@ -142,76 +174,28 @@ args = TrainingArguments(
     report_to=["tensorboard"],
 )
 
-# ------------------------------------------------------------------
-# 4. Trainer
-# ------------------------------------------------------------------
-def compute_metrics(eval_pred):
+# ──────────────────────────────────────────────────────────────
+# 5. Metrics & Trainer
+# ──────────────────────────────────────────────────────────────
+def perplexity(eval_pred):
     logits, labels = eval_pred
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
-    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
-    loss = loss_fct(
+    loss = torch.nn.functional.cross_entropy(
         shift_logits.view(-1, shift_logits.size(-1)),
         shift_labels.view(-1),
+        ignore_index=-100,
     )
-    perplexity = torch.exp(loss).cpu().item()
-    return {"eval_loss": loss.cpu().item(), "perplexity": perplexity}
-
-class PackedDataCollator:
-    def __init__(self, tokenizer, max_length=2048):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.eos_id = tokenizer.eos_token_id
-        self.pad_id = tokenizer.pad_token_id
-
-    def __call__(self, features):
-        all_ids = [f["input_ids"] for f in features]
-        packed_input_ids = []
-        packed_labels = []
-        buffer = []
-
-        for ids in all_ids:
-            if len(buffer) + len(ids) + 1 > self.max_length:
-                if buffer:
-                    seq = buffer
-                    pad_len = self.max_length - len(seq)
-                    seq += [self.pad_id] * pad_len
-                    packed_input_ids.append(seq)
-                    packed_labels.append(seq.copy())
-                    buffer = []
-            if len(ids) + 1 <= self.max_length:
-                buffer += ids + [self.eos_id]
-            else:
-                truncated = ids[: self.max_length - 1]
-                buffer += truncated + [self.eos_id]
-
-        if buffer:
-            seq = buffer
-            pad_len = self.max_length - len(seq)
-            seq += [self.pad_id] * pad_len
-            packed_input_ids.append(seq)
-            packed_labels.append(seq.copy())
-
-        batch_input = torch.tensor(packed_input_ids, dtype=torch.long)
-        attention_mask = (batch_input != self.pad_id).long()
-        batch_labels = torch.tensor(packed_labels, dtype=torch.long)
-
-        return {
-            "input_ids": batch_input,
-            "attention_mask": attention_mask,
-            "labels": batch_labels,
-        }
-
-data_collator = PackedDataCollator(tokenizer, max_length=2048)
+    return {"eval_loss": loss.item(), "perplexity": torch.exp(loss).item()}
 
 trainer = Trainer(
     model=model,
     args=args,
     train_dataset=train_ds,
     eval_dataset=eval_ds,
-    tokenizer=tokenizer,
-    data_collator=data_collator,
-    compute_metrics=compute_metrics,
+    tokenizer=tok,
+    data_collator=collate_fn,
+    compute_metrics=perplexity,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
 )
 
