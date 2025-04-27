@@ -86,7 +86,7 @@ cfg     = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
 if importlib.util.find_spec("flash_attn"):
     attn_impl = "flash_attention_2"
 else:
-    attn_impl = "sdpa"  # torch’s fused scaled-dot-product
+    attn_impl = "sdpa"  # torch's fused scaled-dot-product
 
 base = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
@@ -186,7 +186,6 @@ trainer = Trainer(
     data_collator=collate_fn,
     compute_metrics=compute_metrics,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
-    label_names=["labels"],             # suppress PeftModel warning
 )
 
 if __name__ == "__main__":
