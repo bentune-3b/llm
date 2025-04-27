@@ -71,8 +71,8 @@ tokenizer.pad_token = tokenizer.eos_token
 tokenize = partial(
     tokenizer,
     truncation=True,
-    padding=False,       # no padding here
-    max_length=4096,     # sequence length set to 4096
+    padding=False,
+    max_length=2048,      # reduced sequence length
     return_tensors=None,
 )
 
@@ -86,7 +86,8 @@ eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
 # 6. Model + LoRA
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
-cfg.rope_scaling = {"type": "dynamic", "factor": 2.0}  # 2048 x 2 -> 4096
+# rope_scaling removed
+
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
@@ -109,7 +110,7 @@ model = get_peft_model(base_model, peft_cfg)
 
 # 7. Efficient sequence-packing collator
 class PackedDataCollator:
-    def __init__(self, tokenizer, max_length=4096):
+    def __init__(self, tokenizer, max_length=2048):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.eos_id = tokenizer.eos_token_id
@@ -122,7 +123,6 @@ class PackedDataCollator:
         buffer = []
 
         for ids in all_ids:
-            # flush if buffer + ids + eos would overflow
             if len(buffer) + len(ids) + 1 > self.max_length:
                 seq = buffer + [self.eos_id]
                 pad_len = self.max_length - len(seq)
@@ -132,7 +132,6 @@ class PackedDataCollator:
                 buffer = []
             buffer += ids + [self.eos_id]
 
-        # flush any remainder
         if buffer:
             seq = buffer
             pad_len = self.max_length - len(seq)
@@ -150,14 +149,14 @@ class PackedDataCollator:
             "labels": batch_labels,
         }
 
-data_collator = PackedDataCollator(tokenizer, max_length=4096)
+data_collator = PackedDataCollator(tokenizer, max_length=2048)
 
 # 8. Training arguments
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    per_device_train_batch_size=2,     # 2 sequences per device
-    gradient_accumulation_steps=16,    # effective batch ~32
+    per_device_train_batch_size=2,
+    gradient_accumulation_steps=16,
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
@@ -203,5 +202,4 @@ trainer = Trainer(
 
 if __name__ == "__main__":
     trainer.train()
-    # Save the final adapter for downstream merging or inference
     model.save_pretrained(os.path.join(OUTPUT_DIR, "final_adapter"))

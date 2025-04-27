@@ -29,7 +29,7 @@ VAL_SPLIT = 0.10
 SEED = 42
 
 # Max tokens allowed in output
-MAX_TOK = 4096
+MAX_TOK = 2048
 
 # Your mix buckets and weights
 MIX_CONFIG: Dict[str, Dict[str, Any]] = {
