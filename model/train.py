@@ -123,14 +123,22 @@ class PackedDataCollator:
         buffer = []
 
         for ids in all_ids:
+            # flush if buffer + ids + EOS would overflow max_length
             if len(buffer) + len(ids) + 1 > self.max_length:
-                seq = buffer + [self.eos_id]
-                pad_len = self.max_length - len(seq)
-                seq += [self.pad_id] * pad_len
-                packed_input_ids.append(seq)
-                packed_labels.append(seq.copy())
-                buffer = []
-            buffer += ids + [self.eos_id]
+                if buffer:  # only if buffer has data
+                    seq = buffer
+                    pad_len = self.max_length - len(seq)
+                    seq += [self.pad_id] * pad_len
+                    packed_input_ids.append(seq)
+                    packed_labels.append(seq.copy())
+                    buffer = []
+            # now add the new ids and EOS
+            if len(ids) + 1 <= self.max_length:
+                buffer += ids + [self.eos_id]
+            else:
+                # truncate ids if too long individually
+                truncated = ids[:self.max_length - 1]
+                buffer += truncated + [self.eos_id]
 
         if buffer:
             seq = buffer
