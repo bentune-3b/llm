@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-LoRA fine-tuning of LLaMA-3 3.2 B on one A100 (ASU SOL)
-• DeepSpeed ZeRO-2
-• 8-bit quantisation (bitsandbytes)
-• Flash-Attention 2 if available, else torch-SDPA
+LoRA fine-tuning of LLaMA-3 3.2B on one A100 (ASU SOL)
+• DeepSpeed ZeRO-2 (no CPU offload)
+• 8-bit quantisation via bitsandbytes
+• Flash-Attention 2 if installed, otherwise torch-SDPA
 • Sequence length 2048, packed batches
 """
 
 import os
 from functools import partial
-import importlib
+import importlib.util
+
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
@@ -24,20 +25,16 @@ from transformers import (
     LlamaConfig,
 )
 
-# ──────────────────────────────────────────────────────────────
-# 0. Paths & constants
-# ──────────────────────────────────────────────────────────────
+# ─── 0. Paths & Constants ─────────────────────────────────────────────────────
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
-DS_CONFIG      = os.path.abspath("model/ds_config.json")   # must exist
+DS_CONFIG      = os.path.abspath("model/ds_config.json")  # must exist
 SEQ_LEN        = 2048
 set_seed(42)
 
-# ──────────────────────────────────────────────────────────────
-# 1. Dataset
-# ──────────────────────────────────────────────────────────────
+# ─── 1. Prepare Dataset ───────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a helpful, respectful and honest assistant. "
     "Always answer as concisely as possible while remaining accurate."
@@ -81,32 +78,31 @@ def tok_fn(batch):
 train_ds = train_ds.map(tok_fn, batched=True, remove_columns=["text"])
 eval_ds  = eval_ds.map(tok_fn,  batched=True, remove_columns=["text"])
 
-# ──────────────────────────────────────────────────────────────
-# 2. Model (8-bit) + LoRA
-# ──────────────────────────────────────────────────────────────
+# ─── 2. Load Model + LoRA + 8-bit ──────────────────────────────────────────────
 bnb_cfg = BitsAndBytesConfig(load_in_8bit=True)
-cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
+cfg     = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
 
-# Choose the fastest attention impl available
+# pick attention implementation
 if importlib.util.find_spec("flash_attn"):
     attn_impl = "flash_attention_2"
 else:
-    attn_impl = "sdpa"                       # torch’s fused SDPA
+    attn_impl = "sdpa"  # torch’s fused scaled-dot-product
 
 base = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
     quantization_config=bnb_cfg,
     attn_implementation=attn_impl,
-    device_map="auto",
     torch_dtype=torch.bfloat16,
+    device_map="auto",
     trust_remote_code=True,
 )
 base.gradient_checkpointing_enable()
 base.config.use_cache = False
 
 lora_cfg = LoraConfig(
-    r=16, lora_alpha=32,
+    r=16,
+    lora_alpha=32,
     target_modules=["q_proj", "v_proj"],
     lora_dropout=0.0,
     bias="none",
@@ -114,28 +110,26 @@ lora_cfg = LoraConfig(
 )
 model = get_peft_model(base, lora_cfg)
 
-# ──────────────────────────────────────────────────────────────
-# 3. Packed collator
-# ──────────────────────────────────────────────────────────────
+# ─── 3. Packed Data Collator ─────────────────────────────────────────────────
 class PackedCollator:
     def __init__(self, tokenizer, max_len=SEQ_LEN):
         self.eos, self.pad = tokenizer.eos_token_id, tokenizer.pad_token_id
         self.max_len = max_len
 
-    def __call__(self, feats):
-        ids = [f["input_ids"] for f in feats]
-        buf, batch = [], []
+    def __call__(self, features):
+        ids   = [f["input_ids"] for f in features]
+        buf   = []
+        batch = []
         for seq in ids:
             if len(buf) + len(seq) + 1 > self.max_len:
-                if buf:
-                    batch.append(buf)
-                    buf = []
+                batch.append(buf)
+                buf = []
             buf += seq + [self.eos]
         if buf:
             batch.append(buf)
-        padded = [
-            s + [self.pad] * (self.max_len - len(s)) for s in batch
-        ]
+
+        # pad to full length
+        padded = [s + [self.pad] * (self.max_len - len(s)) for s in batch]
         tens = torch.tensor(padded, dtype=torch.long)
         return {
             "input_ids": tens,
@@ -145,9 +139,7 @@ class PackedCollator:
 
 collate_fn = PackedCollator(tok)
 
-# ──────────────────────────────────────────────────────────────
-# 4. TrainingArguments
-# ──────────────────────────────────────────────────────────────
+# ─── 4. TrainingArguments ─────────────────────────────────────────────────────
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
@@ -155,7 +147,7 @@ args = TrainingArguments(
     optim="adamw_bnb_8bit",
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
-    dataloader_num_workers=4,
+    dataloader_num_workers=2,            # lowered to avoid worker warnings
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
@@ -174,13 +166,11 @@ args = TrainingArguments(
     report_to=["tensorboard"],
 )
 
-# ──────────────────────────────────────────────────────────────
-# 5. Metrics & Trainer
-# ──────────────────────────────────────────────────────────────
-def perplexity(eval_pred):
-    logits, labels = eval_pred
-    shift_logits = logits[..., :-1, :].contiguous()
-    shift_labels = labels[..., 1:].contiguous()
+# ─── 5. Metrics & Trainer ────────────────────────────────────────────────────
+def compute_metrics(eval_preds):
+    logits, labels = eval_preds
+    shift_logits  = logits[..., :-1, :].contiguous()
+    shift_labels  = labels[..., 1:].contiguous()
     loss = torch.nn.functional.cross_entropy(
         shift_logits.view(-1, shift_logits.size(-1)),
         shift_labels.view(-1),
@@ -193,10 +183,10 @@ trainer = Trainer(
     args=args,
     train_dataset=train_ds,
     eval_dataset=eval_ds,
-    tokenizer=tok,
     data_collator=collate_fn,
-    compute_metrics=perplexity,
+    compute_metrics=compute_metrics,
     callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+    label_names=["labels"],             # suppress PeftModel warning
 )
 
 if __name__ == "__main__":
