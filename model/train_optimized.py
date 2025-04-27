@@ -99,6 +99,9 @@ base_model = AutoModelForCausalLM.from_pretrained(
 base_model.gradient_checkpointing_enable()
 base_model.config.use_cache = False
 
+# Enable FlashAttention before wrapping with PEFT
+base_model.enable_xformers_memory_efficient_attention()
+
 peft_cfg = LoraConfig(
     r=16,
     lora_alpha=32,
@@ -110,7 +113,7 @@ peft_cfg = LoraConfig(
 model = get_peft_model(base_model, peft_cfg)
 
 # 7. Enable Flash (xFormers) attention
-model.enable_xformers_memory_efficient_attention()
+# model.enable_xformers_memory_efficient_attention()  # Removed as it's now done above
 
 # 8. Packed data collator (unchanged)
 class PackedDataCollator:
