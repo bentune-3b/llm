@@ -7,14 +7,6 @@ larger batch, and multiple workers.
 
 import os
 from functools import partial
-
-# Try to enable xFormers memory efficient attention
-try:
-    from transformers.utils.xformers_utils import enable_xformers_memory_efficient_attention
-    enable_xformers_memory_efficient_attention()
-except ImportError:
-    print("Warning: xFormers flash attention helper not found; continuing without it")
-
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
@@ -24,22 +16,24 @@ from transformers import (
     Trainer,
     TrainingArguments,
     EarlyStoppingCallback,
-    BitsAndBytesConfig,          # NEW: For 8-bit quantization
+    BitsAndBytesConfig,
     set_seed,
     LlamaConfig,
 )
 
-# 1. Reproducibility
-set_seed(42)
-
-# 2. Paths
+# ------------------------------------------------------------------
+# 0. Paths and constants
+# ------------------------------------------------------------------
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
-DS_CONFIG = "./model/ds_config.json"
+DS_CONFIG      = os.path.abspath("model/ds_config.json")   # absolute
+set_seed(42)
 
-# 3. Prompt template
+# ------------------------------------------------------------------
+# 1. Dataset prep
+# ------------------------------------------------------------------
 SYSTEM_PROMPT = (
     "You are a helpful, respectful and honest assistant. "
     "Always answer as concisely as possible while remaining accurate."
@@ -57,7 +51,6 @@ def build_prompt(instruction: str, inp: str | None = None) -> str:
     parts.append("\n[/INST]")
     return "".join(parts)
 
-# 4. Load and preprocess cleaned datasets
 raw = load_dataset(
     "json",
     data_files={"train": TRAIN_FILE, "validation": VAL_FILE},
@@ -74,7 +67,7 @@ def format_example(ex):
 train_ds = train_ds.map(format_example, remove_columns=train_ds.column_names)
 eval_ds  = eval_ds.map(format_example,  remove_columns=eval_ds.column_names)
 
-# 5. Tokenizer & tokenization
+# Tokenizer & tokenization
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, use_fast=True)
 tokenizer.pad_token = tokenizer.eos_token
 
@@ -93,21 +86,17 @@ def tokenize_fn(batch):
 train_ds = train_ds.map(tokenize_fn, batched=True, remove_columns=["text"])
 eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
-# 6. Model + LoRA + 8-bit
+# ------------------------------------------------------------------
+# 2. Model + LoRA + 8-bit + FlashAttention
+# ------------------------------------------------------------------
+bnb_cfg = BitsAndBytesConfig(load_in_8bit=True)
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
-
-# Configure 8-bit quantization
-bnb_cfg = BitsAndBytesConfig(
-    load_in_8bit=True,
-    llm_int8_threshold=6.0,
-    llm_int8_skip_modules=None,
-)
 
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
-    quantization_config=bnb_cfg,       # Use BitsAndBytesConfig instead of load_in_8bit
-    attn_implementation="flash_attention_2",  # Enable FlashAttention
+    quantization_config=bnb_cfg,
+    attn_implementation="flash_attention_2",   # activates flash-attention if available
     torch_dtype=torch.bfloat16,
     device_map="auto",
     trust_remote_code=True,
@@ -115,20 +104,59 @@ base_model = AutoModelForCausalLM.from_pretrained(
 base_model.gradient_checkpointing_enable()
 base_model.config.use_cache = False
 
-peft_cfg = LoraConfig(
-    r=16,
-    lora_alpha=32,
+lora_cfg = LoraConfig(
+    r=16, lora_alpha=32,
     target_modules=["q_proj", "v_proj"],
     lora_dropout=0.0,
     bias="none",
     task_type="CAUSAL_LM",
 )
-model = get_peft_model(base_model, peft_cfg)
+model = get_peft_model(base_model, lora_cfg)
 
-# 7. Enable Flash (xFormers) attention
-# Removed as it's now handled globally
+# ------------------------------------------------------------------
+# 3. TrainingArguments
+# ------------------------------------------------------------------
+args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    bf16=True,
+    deepspeed=DS_CONFIG,                 # absolute path that exists
+    optim="adamw_bnb_8bit",
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=8,
+    dataloader_num_workers=4,
+    num_train_epochs=3,
+    learning_rate=1e-4,
+    warmup_ratio=0.03,
+    lr_scheduler_type="linear",
+    logging_dir=os.path.join(OUTPUT_DIR, "logs"),
+    logging_strategy="steps",
+    logging_steps=25,
+    evaluation_strategy="steps",
+    eval_steps=100,
+    save_strategy="steps",
+    save_steps=100,
+    save_total_limit=2,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    report_to=["tensorboard"],
+)
 
-# 8. Packed data collator (unchanged)
+# ------------------------------------------------------------------
+# 4. Trainer
+# ------------------------------------------------------------------
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+    loss = loss_fct(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.view(-1),
+    )
+    perplexity = torch.exp(loss).cpu().item()
+    return {"eval_loss": loss.cpu().item(), "perplexity": perplexity}
+
 class PackedDataCollator:
     def __init__(self, tokenizer, max_length=2048):
         self.tokenizer = tokenizer
@@ -176,47 +204,6 @@ class PackedDataCollator:
 
 data_collator = PackedDataCollator(tokenizer, max_length=2048)
 
-# 9. Training arguments with DeepSpeed, 8-bit optimizer, larger batch, workers
-args = TrainingArguments(
-    output_dir=OUTPUT_DIR,
-    bf16=True,
-    deepspeed=DS_CONFIG,               # Use absolute path
-    optim="adamw_bnb_8bit",
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=8,
-    dataloader_num_workers=4,
-    num_train_epochs=3,
-    learning_rate=1e-4,
-    warmup_ratio=0.03,
-    lr_scheduler_type="linear",
-    logging_dir=os.path.join(OUTPUT_DIR, "logs"),
-    logging_strategy="steps",
-    logging_steps=25,
-    eval_strategy="steps",
-    eval_steps=100,
-    save_strategy="steps",
-    save_steps=100,
-    save_total_limit=2,
-    load_best_model_at_end=True,
-    metric_for_best_model="eval_loss",
-    greater_is_better=False,
-    report_to=["tensorboard", "wandb"],
-)
-
-# 10. Metrics (unchanged)
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    shift_logits = logits[..., :-1, :].contiguous()
-    shift_labels = labels[..., 1:].contiguous()
-    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
-    loss = loss_fct(
-        shift_logits.view(-1, shift_logits.size(-1)),
-        shift_labels.view(-1),
-    )
-    perplexity = torch.exp(loss).cpu().item()
-    return {"eval_loss": loss.cpu().item(), "perplexity": perplexity}
-
-# 11. Trainer (unchanged)
 trainer = Trainer(
     model=model,
     args=args,
