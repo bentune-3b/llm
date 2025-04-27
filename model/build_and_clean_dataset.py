@@ -20,7 +20,7 @@ from transformers import AutoTokenizer
 # ----- Config ----- #
 
 # How many examples you aim to end up with (after cleaning)
-TARGET_TOTAL = 165_000
+TARGET_TOTAL = 95_000
 
 # Fraction for validation split
 VAL_SPLIT = 0.10
@@ -163,6 +163,20 @@ def normalize(example: Dict[str, Any], source: str) -> Dict[str, str]:
         if isinstance(raw, dict):
             raw = raw.get("value","")
         entry = _norm_generic(example.get("question",""), raw)
+    elif source == "domenicrosati/TruthfulQA":
+        entry = _norm_generic(example.get("Question", ""), example.get("Best Answer", ""))
+    elif source == "openai/webgpt_comparisons":
+        question = example.get("question", {}).get("full_text", "")
+        # Merge the two answers with preference indicated by score
+        answer0 = example.get("answer_0", "")
+        answer1 = example.get("answer_1", "")
+        score0 = example.get("score_0", 0.0)
+        score1 = example.get("score_1", 0.0)
+        if score0 >= score1:
+            merged = f"<preferred>\n{answer0}\n<other>\n{answer1}"
+        else:
+            merged = f"<preferred>\n{answer1}\n<other>\n{answer0}"
+        entry = _norm_generic(question, merged)
     else:
         entry = _norm_generic(
             example.get("input",""),
