@@ -8,6 +8,13 @@ larger batch, and multiple workers.
 import os
 from functools import partial
 
+# Try to enable xFormers memory efficient attention
+try:
+    from transformers.utils.xformers_utils import enable_xformers_memory_efficient_attention
+    enable_xformers_memory_efficient_attention()
+except ImportError:
+    print("Warning: xFormers flash attention helper not found; continuing without it")
+
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
@@ -19,16 +26,12 @@ from transformers import (
     EarlyStoppingCallback,
     set_seed,
     LlamaConfig,
-    enable_xformers_memory_efficient_attention,
 )
 
 # 0. DeepSpeed configuration file (ds_config.json) must exist alongside this script.
 
 # 1. Reproducibility
 set_seed(42)
-
-# Register xFormers memory efficient attention globally
-enable_xformers_memory_efficient_attention()
 
 # 2. Paths
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
