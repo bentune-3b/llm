@@ -29,9 +29,6 @@ from transformers import (
     LlamaConfig,
 )
 
-# 0. DeepSpeed configuration file (ds_config.json) must exist alongside this script.
-DS_CONFIG = os.path.join(os.path.dirname(__file__), "ds_config.json")  # absolute path
-
 # 1. Reproducibility
 set_seed(42)
 
@@ -40,6 +37,7 @@ BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
+DS_CONFIG = "./model/ds_config.json"
 
 # 3. Prompt template
 SYSTEM_PROMPT = (
