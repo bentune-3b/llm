@@ -19,12 +19,16 @@ from transformers import (
     EarlyStoppingCallback,
     set_seed,
     LlamaConfig,
+    enable_xformers_memory_efficient_attention,
 )
 
 # 0. DeepSpeed configuration file (ds_config.json) must exist alongside this script.
 
 # 1. Reproducibility
 set_seed(42)
+
+# Register xFormers memory efficient attention globally
+enable_xformers_memory_efficient_attention()
 
 # 2. Paths
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
@@ -99,9 +103,6 @@ base_model = AutoModelForCausalLM.from_pretrained(
 base_model.gradient_checkpointing_enable()
 base_model.config.use_cache = False
 
-# Enable FlashAttention before wrapping with PEFT
-base_model.enable_xformers_memory_efficient_attention()
-
 peft_cfg = LoraConfig(
     r=16,
     lora_alpha=32,
@@ -113,7 +114,7 @@ peft_cfg = LoraConfig(
 model = get_peft_model(base_model, peft_cfg)
 
 # 7. Enable Flash (xFormers) attention
-# model.enable_xformers_memory_efficient_attention()  # Removed as it's now done above
+# Removed as it's now handled globally
 
 # 8. Packed data collator (unchanged)
 class PackedDataCollator:
