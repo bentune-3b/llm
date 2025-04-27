@@ -92,7 +92,6 @@ base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
     config=cfg,
     torch_dtype=torch.bfloat16,
-    device_map="auto",
     trust_remote_code=True,
 )
 base_model.gradient_checkpointing_enable()
@@ -163,8 +162,11 @@ data_collator = PackedDataCollator(tokenizer, max_length=2048)
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
-    per_device_train_batch_size=2,
+    per_device_train_batch_size=8,
     gradient_accumulation_steps=16,
+    per_device_eval_batch_size=2,
+    eval_accumulation_steps=10,    
+    prediction_loss_only=True,                                   
     num_train_epochs=3,
     learning_rate=1e-4,
     warmup_ratio=0.03,
@@ -180,7 +182,7 @@ args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    report_to=["tensorboard", "wandb"],
+    report_to=["tensorboard", "wandb"]
 )
 
 # 9. Metrics

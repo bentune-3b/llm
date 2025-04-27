@@ -177,6 +177,21 @@ def normalize(example: Dict[str, Any], source: str) -> Dict[str, str]:
         else:
             merged = f"<preferred>\n{answer1}\n<other>\n{answer0}"
         entry = _norm_generic(question, merged)
+    elif source == "tau/commonsense_qa":
+        question = example.get("question", "")
+        choices = example.get("choices", {})
+        labels = choices.get("label", [])
+        texts = choices.get("text", [])
+        answer_label = example.get("answerKey", "")
+
+        # Find the correct answer text based on label
+        answer_text = ""
+        if answer_label in labels:
+            idx = labels.index(answer_label)
+            if idx < len(texts):
+                answer_text = texts[idx]
+
+        entry = _norm_generic(question, answer_text)
     else:
         entry = _norm_generic(
             example.get("input",""),
