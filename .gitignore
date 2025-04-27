@@ -189,3 +189,5 @@ cython_debug/
 .elasticbeanstalk/*
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
+model/train_set_cleaned.jsonl
+model/val_set_cleaned.jsonl
