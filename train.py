@@ -1,8 +1,10 @@
-#!/usr/bin/env python3
-"""
-LoRA supervised fine-tuning for LLaMA-3 3.2B on ASU SOL
-(using relative paths for cleaned train and validation JSONL)
-"""
+# train.py
+# ------------------------
+# training pipeline
+# - generates a train_set.jsonl
+# ------------------------
+# Team: Bentune 3b
+# Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
 import os
 from functools import partial
@@ -20,16 +22,14 @@ from transformers import (
     LlamaConfig,
 )
 
-# 1. Reproducibility
 set_seed(42)
 
-# 2. Paths (relative to project root)
+# --- base paths ---
 BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
 TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
 VAL_FILE       = "./model/val_set_cleaned.jsonl"
 OUTPUT_DIR     = "./model/output_model"
 
-# 3. Prompt template
 SYSTEM_PROMPT = (
     "You are a helpful, respectful and honest assistant. "
     "Always answer as concisely as possible while remaining accurate."
@@ -47,7 +47,7 @@ def build_prompt(instruction: str, inp: str | None = None) -> str:
     parts.append("\n[/INST]")
     return "".join(parts)
 
-# 4. Load and preprocess cleaned datasets
+# --- loaders ---
 raw = load_dataset(
     "json",
     data_files={"train": TRAIN_FILE, "validation": VAL_FILE},
@@ -64,7 +64,7 @@ def format_example(ex):
 train_ds = train_ds.map(format_example, remove_columns=train_ds.column_names)
 eval_ds  = eval_ds.map(format_example,  remove_columns=eval_ds.column_names)
 
-# 5. Tokenizer & tokenization
+# load tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, use_fast=True)
 tokenizer.pad_token = tokenizer.eos_token
 
@@ -84,9 +84,7 @@ def tokenize_fn(batch):
 train_ds = train_ds.map(tokenize_fn, batched=True, remove_columns=["text"])
 eval_ds  = eval_ds.map(tokenize_fn,  batched=True, remove_columns=["text"])
 
-# 6. Model + LoRA
 cfg = LlamaConfig.from_pretrained(BASE_MODEL_DIR)
-# rope_scaling removed
 
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL_DIR,
@@ -107,7 +105,7 @@ peft_cfg = LoraConfig(
 )
 model = get_peft_model(base_model, peft_cfg)
 
-# 7. Efficient sequence-packing collator
+# collator loading -- efficiency only
 class PackedDataCollator:
     def __init__(self, tokenizer, max_length=2048):
         self.tokenizer = tokenizer
@@ -158,7 +156,7 @@ class PackedDataCollator:
 
 data_collator = PackedDataCollator(tokenizer, max_length=2048)
 
-# 8. Training arguments
+# --- TRAINING ARGS ---
 args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     bf16=True,
@@ -185,7 +183,7 @@ args = TrainingArguments(
     report_to=["tensorboard", "wandb"]
 )
 
-# 9. Metrics
+# eval metrics
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     shift_logits = logits[..., :-1, :].contiguous()
@@ -198,7 +196,7 @@ def compute_metrics(eval_pred):
     perplexity = torch.exp(loss).cpu().item()
     return {"eval_loss": loss.cpu().item(), "perplexity": perplexity}
 
-# 10. Trainer
+# fine tuner
 trainer = Trainer(
     model=model,
     args=args,

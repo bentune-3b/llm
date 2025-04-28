@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: bentune-api
-    env: python
-    plan: free
-    buildCommand: ""
-    startCommand: "python api/run.py"

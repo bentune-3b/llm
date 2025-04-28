@@ -26,11 +26,11 @@ from transformers import (
 )
 
 # ─── 0. Paths & Constants ─────────────────────────────────────────────────────
-BASE_MODEL_DIR = "./model/vanilla-llama-3.2-3b-bf16"
-TRAIN_FILE     = "./model/train_set_cleaned.jsonl"
-VAL_FILE       = "./model/val_set_cleaned.jsonl"
-OUTPUT_DIR     = "./model/output_model"
-DS_CONFIG      = os.path.abspath("model/ds_config.json")  # must exist
+BASE_MODEL_DIR = "./vanilla-llama-3.2-3b-bf16"
+TRAIN_FILE     = "./train_set_cleaned.jsonl"
+VAL_FILE       = "./val_set_cleaned.jsonl"
+OUTPUT_DIR     = "./output_model"
+DS_CONFIG      = os.path.abspath("./ds_config.json")  # must exist
 SEQ_LEN        = 2048
 set_seed(42)
 
