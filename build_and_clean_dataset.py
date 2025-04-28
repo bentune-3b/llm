@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
-"""
-build_and_clean_dataset.py
-
-Full pipeline: load → normalize → clean → dedupe → mix → cap → split → write.
-Combines logic from dataset.py and clean_dataset.py.
-"""
+# build_and_clean_dataset.py
+# ------------------------
+# Full pipeline: load → normalize → clean → dedupe → mix → cap → split → write.
+# Combines logic from dataset.py and clean_dataset.py.
+# ------------------------
+# Team: Bentune 3b
+# Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
 
 import json
 import unicodedata
@@ -17,21 +17,20 @@ from typing import Any, Dict, List, Optional
 from datasets import load_dataset, interleave_datasets, Dataset, DatasetDict
 from transformers import AutoTokenizer
 
-# ----- Config ----- #
+# ---- configs ----
 
-# How many examples you aim to end up with (after cleaning)
+# total examples (validation + training)
 TARGET_TOTAL = 95_000
 
-# Fraction for validation split
+# ratio
 VAL_SPLIT = 0.10
 
-# Random seed
 SEED = 42
 
-# Max tokens allowed in output
+# max output tokens
 MAX_TOK = 2048
 
-# Your mix buckets and weights
+# --- dataset configs ---
 MIX_CONFIG: Dict[str, Dict[str, Any]] = {
     "general": {
         "datasets": [
@@ -68,10 +67,9 @@ MIX_CONFIG: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# System prompt used in normalization
 SYS_PROMPT = "You are an honest, respectful and helpful assistant."
 
-# ----- Cleaning tools ----- #
+# --- cleaning ---
 
 TOKENIZER = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B", use_fast=True)
 URL_RE = re.compile(r"https?://\S+")
@@ -116,7 +114,7 @@ def clean_and_dedupe(ex: Dict[str, str]) -> bool:
     _seen_hashes.add(h)
     return True
 
-# ----- Normalization per source ----- #
+# --- normalization functions ---
 
 def _norm_generic(i: str, o: str) -> Dict[str, str]:
     return {"instruction": SYS_PROMPT, "input": i or "", "output": o or ""}
@@ -167,7 +165,7 @@ def normalize(example: Dict[str, Any], source: str) -> Dict[str, str]:
         entry = _norm_generic(example.get("Question", ""), example.get("Best Answer", ""))
     elif source == "openai/webgpt_comparisons":
         question = example.get("question", {}).get("full_text", "")
-        # Merge the two answers with preference indicated by score
+        # merge answers
         answer0 = example.get("answer_0", "")
         answer1 = example.get("answer_1", "")
         score0 = example.get("score_0", 0.0)
@@ -183,8 +181,6 @@ def normalize(example: Dict[str, Any], source: str) -> Dict[str, str]:
         labels = choices.get("label", [])
         texts = choices.get("text", [])
         answer_label = example.get("answerKey", "")
-
-        # Find the correct answer text based on label
         answer_text = ""
         if answer_label in labels:
             idx = labels.index(answer_label)
@@ -200,8 +196,7 @@ def normalize(example: Dict[str, Any], source: str) -> Dict[str, str]:
     entry["source"] = source
     return entry
 
-# ----- Loader + Prep ----- #
-
+# --- loading stuff ---
 LOAD_KWARGS: Dict[str, Dict[str, Any]] = {
     "gsm8k": {"name": "main"},
     "hotpot_qa": {"name": "distractor"},
@@ -226,6 +221,7 @@ BIGBENCH_SUBSETS: List[str] = [
     "tracking_shuffled_objects_three_objects", "web_of_lies",
     "word_sorting",
 ]
+
 def load_and_prep(source: str, split: str = "train", num_samples: Optional[int] = None) -> Dataset:
     if source == "maveriq/bigbenchhard":
         parts = [
@@ -265,13 +261,13 @@ def load_and_prep(source: str, split: str = "train", num_samples: Optional[int] 
 
     return ds
 
-# ----- Main pipeline ----- #
+# main pipeline
 
 def main():
     out_dir = Path("model")
     out_dir.mkdir(exist_ok=True, parents=True)
 
-    # 1. Build each bucket
+    # build buckets
     buckets: Dict[str, Dataset] = {}
     for name, cfg in MIX_CONFIG.items():
         parts = []
@@ -294,7 +290,7 @@ def main():
             print(f"  → Warning: Bucket '{name}' is empty after cleaning")
             buckets[name] = None
 
-    # 2. Mix buckets by weight
+    # mix buckets
     valid_buckets = {k: v for k, v in buckets.items() if v is not None}
     if not valid_buckets:
         raise ValueError("No valid datasets found after cleaning")
@@ -307,25 +303,25 @@ def main():
     )
     print(f"Mixed total before cap: {len(mixed)}")
 
-    # 3. Cap to TARGET_TOTAL
+    # cap at max limit
     if len(mixed) > TARGET_TOTAL:
         mixed = mixed.shuffle(seed=SEED).select(range(TARGET_TOTAL))
         print(f"Capped to {TARGET_TOTAL}")
     else:
         print("Under target; using all available")
 
-    # 4. Split
+    # split
     ds_dict: DatasetDict = mixed.train_test_split(test_size=VAL_SPLIT, seed=SEED)
     print(f"Split sizes → train: {len(ds_dict['train'])}, val: {len(ds_dict['test'])}")
 
-    # 5. Detailed breakdown
+    # break datasets into train and test
     for split in ("train","test"):
         counter = Counter(ex["source"] for ex in ds_dict[split])
         print(f"Breakdown for {split}:")
         for src, count in counter.most_common():
             print(f"  • {src}: {count}")
 
-    # 6. Write JSONL
+    # write to file
     for split, fname in [("train","train_set_cleaned.jsonl"),
                          ("test","val_set_cleaned.jsonl")]:
         path = out_dir / fname

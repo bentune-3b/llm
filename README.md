@@ -1,37 +1,91 @@
-## SOL setup:
-enable the cisco vpn
+# Llama 3.2 Fine-Tuning
 
-`ssh <ur asurite>@login.sol.rc.asu.edu`
+This repository contains the code to fine-tune a LLaMA 3.2 3B model through **instruction tuning** and **chain-of-thought reasoning**.
 
-to logout use:
-`logout`
-or
-`exit`
+We utilize ASU's SOL supercomputing cluster, specifically using **4 CPUs** and a **NVIDIA A100 GPU** for training.
 
-should prompt you for your password
+## Datasets Used
 
-then run:
+- **gsm8k** (main split)
+- **hotpot_qa** (distractor split)
+- **mandarjoshi/trivia_qa** (rc split)
+- **sentence-transformers/natural-questions** (pair split)
+- **domenicrosati/TruthfulQA** (default split)
+- **Anthropic/hh-rlhf** (default split)
 
-`module load mamba/latest`
+Additionally, the following BIG-Bench subsets were used:
 
-`mamba create -n bentune python=3.10 -y`
+- boolean_expressions
+- causal_judgement
+- date_understanding
+- disambiguation_qa
+- dyck_languages
+- formal_fallacies
+- geometric_shapes
+- hyperbaton
+- logical_deduction_five_objects
+- logical_deduction_seven_objects
+- logical_deduction_three_objects
+- movie_recommendation
+- multistep_arithmetic_two
+- navigate
+- object_counting
+- penguins_in_a_table
+- reasoning_about_colored_objects
+- ruin_names
+- salient_translation_error_detection
+- snarks
+- sports_understanding
+- temporal_sequences
+- tracking_shuffled_objects_five_objects
+- tracking_shuffled_objects_seven_objects
+- tracking_shuffled_objects_three_objects
+- web_of_lies
+- word_sorting
 
-Apparently 3.10 is the recommended version for our use case, as it offers broad compatibility with major ml libs 
+## SOL Setup Instructions
 
-`source activate bentune`
+1. Enable Cisco VPN and connect.
 
-`pip install --upgrade pip`
+2. SSH into SOL:
+   ```bash
+   ssh <your_asurite>@login.sol.rc.asu.edu
+   ```
 
-`pip install transformers accelerate torch sentencepiece safetensors huggingface_hub datasets`
+3. Load Mamba:
+   ```bash
+   module load mamba/latest
+   ```
 
-`huggingface-cli login`
+4. Create and activate the environment:
+   ```bash
+   mamba create -n bentune python=3.10 -y
+   source activate bentune
+   ```
 
-then paste the hf token
-this should keep you logged in till the token expires 
-so dont have to worry abt it again
+5. Install Python packages:
+   ```bash
+   pip install --upgrade pip
+   pip install transformers accelerate torch sentencepiece safetensors huggingface_hub datasets
+   ```
 
-then we set up the repo in your SOL instance
+6. Authenticate Hugging Face CLI:
+   ```bash
+   huggingface-cli login
+   ```
+   Paste your HF token when prompted.
 
-`git clone https://<your-username>:<your-token>@github.com/bentune-3b/llm.git bentune`
+7. Clone the repository:
+   ```bash
+   git clone https://<your-username>:<your-token>@github.com/bentune-3b/llm.git bentune
+   ```
 
 ---
+
+## Contributors
+
+- Deep Goyal
+- Namita Shah
+- Jay Pavuluri
+- Evan Zhu
+- Navni Athale

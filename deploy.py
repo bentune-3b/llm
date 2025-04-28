@@ -1,3 +1,10 @@
+# deploy.py
+# ------------------------
+# SOL LOADER -- USE FOR PRESENTATION AND EVAL
+# ------------------------
+# Team: Bentune 3b
+# Deep Goyal, Namita Shah, Jay Pavuluri, Evan Zhu, Navni Athale
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import os
