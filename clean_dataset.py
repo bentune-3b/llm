@@ -14,10 +14,10 @@ from transformers import AutoTokenizer
 from tqdm import tqdm
 import re
 
-TRAIN_IN="model/train_set.jsonl"
-VAL_IN="model/val_set.jsonl"
-TRAIN_OUT="model/train_set_cleaned.jsonl"
-VAL_OUT="model/val_set_cleaned.jsonl"
+TRAIN_IN="./train_set.jsonl"
+VAL_IN="./val_set.jsonl"
+TRAIN_OUT="./train_set_cleaned.jsonl"
+VAL_OUT="./val_set_cleaned.jsonl"
 MAX_TOK=4096
 
 TOKENIZER=AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B",use_fast=True)

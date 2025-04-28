@@ -2,7 +2,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import os
 
-model_path = os.path.expanduser("model/llama-3.2-3b-finetuned")
+model_path = os.path.expanduser("./llama-3.2-3b-finetuned")
 
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 
