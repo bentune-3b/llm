@@ -5,18 +5,40 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f9fafb;      
+  --foreground: #111827;        
+  --muted-foreground: #6b7280;  
+  --border: #d1d5db;           
+  --card-background: #ffffff;  
+  --input-background: #ffffff;  
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+
+.dark {
+  --background: #111827;         
+  --foreground: #f9fafb;        
+  --muted-foreground: #9ca3af;   
+  --border: #374151;             
+  --card-background: #1f2937;    
+  --input-background: #1f2937;   
 }
 
 body {
   @apply bg-[var(--background)] text-[var(--foreground)] transition-colors duration-300;
   font-family: var(--font-geist-sans), Arial, sans-serif;
 }
+
+input, textarea {
+  background-color: var(--input-background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
 }
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+
+
+ 
